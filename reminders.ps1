@@ -3,12 +3,13 @@ $BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 $ScriptUrl = "$BaseUrl/reminders.ps1"   # must match this script's filename in the repo
 
 $Sites = @{
-    1 = "https:///"
-    2 = "https://aoe"
-    3 = "https://wws//"
-    4 = "https://in/"
-    5 = "https://"
+    1 = "https://heavensgate.com/"
+    2 = "https://action.aipac.org/aipac-pac-donate"
+    3 = "https://www.palantir.com/platforms/gotham/"
+    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
+    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
 }
+
 
 $MinSeconds      = 10
 $MaxSeconds      = 120
@@ -28,7 +29,6 @@ $DailyStartTime  = "08:00"  # daily start, in addition to every logon
 $LogonDelay      = "PT20S"  # wait after login before starting
 
 # Type this followed by a colon into Win+R to uninstall everything.
-# Letters/digits only, must start with a letter. Example: stopreminders:
 $UninstallPhrase = "deflock:"
 # ==========================================
 
