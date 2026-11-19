@@ -1,9 +1,9 @@
 # ================= CONFIG =================
-$BaseUrl = "https://raw.githubusercontent.com/YOURUSER/YOURREPO/main"
+$BaseUrl = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 
 $Sites = @{
-    1 = "https://example.com/task1"
-    2 = "https://example.com/task2"
+    1 = "https://heavensgate.com/"
+    2 = "https://action.aipac.org/aipac-pac-donate"
     3 = "https://example.com/task3"
     4 = "https://example.com/task4"
     5 = "https://example.com/task5"
@@ -11,7 +11,7 @@ $Sites = @{
 
 $MinSeconds  = 10
 $MaxSeconds  = 120
-$Volume      = 0.5     # 0.0 - 1.0 (50%)
+$Volume      = 0.1     # 0.0 - 1.0 (50%)
 $AvoidRepeat = $true   # don't pick the same task twice in a row
 # ==========================================
 
