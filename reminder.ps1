@@ -4,9 +4,9 @@ $BaseUrl = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 $Sites = @{
     1 = "https://heavensgate.com/"
     2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://example.com/task3"
-    4 = "https://example.com/task4"
-    5 = "https://example.com/task5"
+    3 = "https://www.palantir.com/careers/"
+    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
+    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
 }
 
 $MinSeconds  = 1
