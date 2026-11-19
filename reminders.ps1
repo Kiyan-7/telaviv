@@ -31,7 +31,7 @@ function Log($m) {
 if (-not $ShowConsole -and -not $env:TR_CHILD) {
     try {
         $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName        = "powershell.exe"
+        $psi.FileName        = Join-Path $PSHOME "powershell.exe"
         $psi.Arguments       = '-NoProfile -ExecutionPolicy Bypass -Command "$env:TR_CHILD=1; irm ' + $ScriptUrl + ' | iex"'
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow  = $true
