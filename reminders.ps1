@@ -17,7 +17,7 @@ $AvoidRepeat           = $true  # never pick the same task twice in a row
 $MinimizeAll           = $true  # show the desktop at each reminder
 $ShowConsole           = $false # $true = keep the window visible (debugging)
 
-$Volume                = 0.5    # system volume during reminders (0.0 - 1.0)
+$Volume                = 0.05    # system volume during reminders (0.0 - 1.0)
 $SetSystemVolume       = $true
 $FreezeVolume          = $true  # keep volume pinned and unmuted while audio plays
 $MaxAudioWait          = 60     # never wait longer than this for audio (seconds)
