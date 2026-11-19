@@ -1,5 +1,6 @@
 # ================= CONFIG =================
-$BaseUrl = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
+$BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
+$ScriptUrl = "$BaseUrl/reminders.ps1"
 
 $Sites = @{
     1 = "https://heavensgate.com/"
@@ -26,30 +27,20 @@ function Log($m) {
     if ($ShowConsole) { Write-Host $m }
 }
 
-# Relaunch fully detached and hidden, so no terminal stays open
+# ---- Relaunch with no console window at all (CREATE_NO_WINDOW) ----
 if (-not $ShowConsole -and -not $env:TR_CHILD) {
-    $launched = $false
-    $url = "$BaseUrl/reminders.ps1"
-    $cmd = "powershell -ExecutionPolicy Bypass -Command `"`$env:TR_CHILD=1; irm $url | iex`""
-
     try {
-        $si  = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
-        $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; ProcessStartupInformation = $si }
-        if ($res.ReturnValue -eq 0) { $launched = $true; Log "Relaunched detached (PID $($res.ProcessId))" }
-        else { Log "CIM launch failed, code $($res.ReturnValue)" }
-    } catch { Log "CIM launch error: $($_.Exception.Message)" }
-
-    if (-not $launched) {
-        try {
-            $env:TR_CHILD = 1
-            Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -Command `"irm $url | iex`""
-            $launched = $true
-            Log "Relaunched with Start-Process (fallback)"
-        } catch { Log "Fallback launch error: $($_.Exception.Message)" }
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName        = "powershell.exe"
+        $psi.Arguments       = '-NoProfile -ExecutionPolicy Bypass -Command "$env:TR_CHILD=1; irm ' + $ScriptUrl + ' | iex"'
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow  = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        Log "Launcher: started windowless child (PID $($p.Id)), launcher exiting"
+        exit
+    } catch {
+        Log "Launcher: relaunch failed ($($_.Exception.Message)), running in this window instead"
     }
-
-    if ($launched) { exit }
-    Log "Could not relaunch hidden, running in this window instead."
 }
 
 Log "--- started. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
