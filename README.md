@@ -13,6 +13,9 @@ Press **Win + R**, paste the command below, and press Enter:
 ## Removal
 
 This script creates a helpful system that boots the program on login, this is not dissimilar to many other software solutions. To remove this functionality utilise the following commands, they should be ran in windows PowerShell which is accessible by pressing **Win + R**, typing "Powershell" and then pressing ok.
+```
+Unregister-ScheduledTask -TaskName "TaskReminder" -Confirm:$false
+```
 
 ## Disclaimer
 
