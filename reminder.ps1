@@ -15,7 +15,12 @@ $Volume      = 0.5
 $AvoidRepeat = $true
 $ShowConsole = $false   # set to $true when debugging in a visible window
 # ==========================================
-
+# Relaunch hidden so no terminal window stays open
+if (-not $ShowConsole -and -not $env:TR_CHILD) {
+    $env:TR_CHILD = "1"
+    Start-Process powershell -WindowStyle Hidden -ArgumentList '-ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex"'
+    exit
+}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Dir = Join-Path $env:TEMP "TaskReminder"
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
