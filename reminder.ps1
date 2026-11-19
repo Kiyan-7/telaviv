@@ -11,7 +11,7 @@ $Sites = @{
 
 $MinSeconds  = 1
 $MaxSeconds  = 5
-$Volume      = 0.1     # 0.0 - 1.0 (50%)
+$Volume      = 0     # 0.0 - 1.0 (50%)
 $AvoidRepeat = $true   # don't pick the same task twice in a row
 # ==========================================
 
