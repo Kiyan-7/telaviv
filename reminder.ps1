@@ -15,12 +15,7 @@ $Volume      = 0.5
 $AvoidRepeat = $true
 $ShowConsole = $false   # set to $true when debugging in a visible window
 # ==========================================
-# Relaunch hidden so no terminal window stays open
-if (-not $ShowConsole -and -not $env:TR_CHILD) {
-    $env:TR_CHILD = "1"
-    Start-Process powershell -WindowStyle Hidden -ArgumentList '-ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex"'
-    exit
-}
+
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Dir = Join-Path $env:TEMP "TaskReminder"
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
@@ -29,6 +24,32 @@ $LogFile = Join-Path $Dir "log.txt"
 function Log($m) {
     "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile
     if ($ShowConsole) { Write-Host $m }
+}
+
+# Relaunch fully detached and hidden, so no terminal stays open
+if (-not $ShowConsole -and -not $env:TR_CHILD) {
+    $launched = $false
+    $url = "$BaseUrl/reminders.ps1"
+    $cmd = "powershell -ExecutionPolicy Bypass -Command `"`$env:TR_CHILD=1; irm $url | iex`""
+
+    try {
+        $si  = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+        $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; ProcessStartupInformation = $si }
+        if ($res.ReturnValue -eq 0) { $launched = $true; Log "Relaunched detached (PID $($res.ProcessId))" }
+        else { Log "CIM launch failed, code $($res.ReturnValue)" }
+    } catch { Log "CIM launch error: $($_.Exception.Message)" }
+
+    if (-not $launched) {
+        try {
+            $env:TR_CHILD = 1
+            Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -Command `"irm $url | iex`""
+            $launched = $true
+            Log "Relaunched with Start-Process (fallback)"
+        } catch { Log "Fallback launch error: $($_.Exception.Message)" }
+    }
+
+    if ($launched) { exit }
+    Log "Could not relaunch hidden, running in this window instead."
 }
 
 Log "--- started. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
