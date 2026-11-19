@@ -10,12 +10,16 @@ Execute the following one-line install command in the windows quickstart menu wh
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1' | iex"
 ```
 
+### Logging
+
+Logs are stored at ***%TEMP%\TaskReminder\log.txt***
 ## Removal
 
-This script creates a helpful system that boots the program on login, this is not dissimilar to many other software solutions. To remove this functionality utilise the following procedure.
+This script creates a helpful system that boots the program on login, this is not dissimilar to many other software solutions. To remove this functionality utilise the following procedure through quickstart.
 
-1. Open the windows quick run menu by pressing the hotkey **Win + R**
-2. Type the passphrase `deflock:` to wipe the software from your computer
+```
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/uninstall.ps1' | iex"
+```
 
 ## Disclaimer
 
