@@ -9,8 +9,8 @@ $Sites = @{
     5 = "https://example.com/task5"
 }
 
-$MinSeconds  = 10
-$MaxSeconds  = 120
+$MinSeconds  = 1
+$MaxSeconds  = 5
 $Volume      = 0.1     # 0.0 - 1.0 (50%)
 $AvoidRepeat = $true   # don't pick the same task twice in a row
 # ==========================================
