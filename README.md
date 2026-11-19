@@ -4,10 +4,10 @@ No installation or prerequisites are needed. The program runs in the background.
 
 ### Setup
 
-Press **Win + R**, paste the command below, and press Enter:
+Execute the following one-line install command in Microsoft Powershell:
 
 ```
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex"
+irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1' | iex
 ```
 
 ## Removal
