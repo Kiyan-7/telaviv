@@ -5,7 +5,7 @@ $ScriptUrl = "$BaseUrl/reminders.ps1"
 $Sites = @{
     1 = "https://heavensgate.com/"
     2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://www.palantir.com/careers/"
+    3 = "https://www.palantir.com/platforms/gotham/"
     4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
     5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
 }
@@ -14,7 +14,7 @@ $MinSeconds  = 10
 $MaxSeconds  = 120
 $Volume      = 0.5
 $AvoidRepeat = $true
-$ShowConsole = $false   # set to $true when debugging in a visible window
+$ShowConsole = $false
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
