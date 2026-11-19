@@ -2,7 +2,7 @@
 
 No installation or prerequisites are needed. The program runs in the background.
 
-### Setup
+## Setup
 
 Execute the following one-line install command in the windows quickstart menu which can be accessed via the keyboard shortcut **Win + R**:
 
