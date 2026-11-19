@@ -13,7 +13,7 @@ $Sites = @{
 
 $MinSeconds      = 10
 $MaxSeconds      = 120
-$Volume          = 0.5    # Windows system volume during reminders (0.0 - 1.0)
+$Volume          = 0.05    # Windows system volume during reminders (0.0 - 1.0)
 $SetSystemVolume = $true  # set to $false to leave your system volume alone
 $AvoidRepeat     = $true
 $MinimizeAll     = $true  # minimise all windows at each reminder
