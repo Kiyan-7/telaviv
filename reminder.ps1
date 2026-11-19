@@ -42,12 +42,12 @@ Log "--- started. Language mode: $($ExecutionContext.SessionState.LanguageMode),
 # Only one copy at a time
 $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
 if (-not $mutex.WaitOne(0)) {
-    Log "Already running, exiting."
-    Notify "Task Reminder" "Already running in the background."
+    Log "Already telling aviv, exiting."
+    Notify "Palantir Device Enrolment" "Already telling aviv in the background."
     exit
 }
 $PID | Out-File (Join-Path $Dir "pid.txt")
-Notify "Task Reminder" "Started. Running in the background."
+Notify "Palantir Device Enrolment" "Telling Aviv, powered by Flock and Palantir."
 
 # Download assets
 foreach ($i in 1..5) {
