@@ -13,16 +13,22 @@ $MinSeconds  = 10
 $MaxSeconds  = 120
 $Volume      = 0.5
 $AvoidRepeat = $true
+$ShowConsole = $false   # set to $true when debugging in a visible window
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Dir = Join-Path $env:TEMP "TaskReminder"
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 $LogFile = Join-Path $Dir "log.txt"
-function Log($m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile; Write-Host $m }
+
+function Log($m) {
+    "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile
+    if ($ShowConsole) { Write-Host $m }
+}
 
 Log "--- started. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
 
+# Only one copy at a time
 $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
 if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
 $PID | Out-File (Join-Path $Dir "pid.txt")
@@ -62,6 +68,7 @@ try {
     $player = New-Object System.Windows.Media.MediaPlayer
 } catch { Log "AUDIO SETUP FAILED: $($_.Exception.Message)" }
 
+# Main loop
 $last = 0
 while ($true) {
     do { $x = Get-Random -Minimum 1 -Maximum 6 } while ($AvoidRepeat -and $x -eq $last)
