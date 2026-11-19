@@ -4,7 +4,7 @@
 
 # ============ Configuration Area (Directly modify file names and URLs) ============
 # Note: Audio must be .wav (PowerShell native support), images can be jpg/png/bmp (will auto-convert)
-R1_NAME="Meeting";    R1_IMG="image1.jpg"; R1_AUD="audio1.wav"; R1_URL="https://example.com/meeting"
+R1_NAME="Heavens Gate";    R1_IMG="image1.jpg"; R1_AUD="audio1.wav"; R1_URL="https://heavensgate.com/"
 R2_NAME="Lunch";      R2_IMG="image2.jpg"; R2_AUD="audio2.wav"; R2_URL="https://example.com/lunch"
 R3_NAME="Workout";    R3_IMG="image3.jpg"; R3_AUD="audio3.wav"; R3_URL="https://example.com/workout"
 R4_NAME="Break";      R4_IMG="image4.jpg"; R4_AUD="audio4.wav"; R4_URL="https://example.com/break"
