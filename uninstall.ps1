@@ -39,8 +39,8 @@ if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name
 if (Test-Path $Cache)                                          { $left += 'cache folder (a copy may still be running)' }
 if (Test-Path $Ctl)                                            { $left += 'uninstaller folder' }
 
-if ($left.Count -eq 0) { $msg = 'Reminders uninstalled: stopped, autostart removed, cached files deleted.' }
+if ($left.Count -eq 0) { $msg = 'Deflocked sucessfuly: stopped, autostart removed, cached files deleted.' }
 else { $msg = "Mostly uninstalled, but these are still present:`n- " + ($left -join "`n- ") }
 
 Add-Type -AssemblyName System.Windows.Forms
-[void][System.Windows.Forms.MessageBox]::Show($msg, 'Task Reminder')
+[void][System.Windows.Forms.MessageBox]::Show($msg, 'Palanatir Enrolement')
