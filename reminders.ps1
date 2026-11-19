@@ -4,7 +4,7 @@ $BaseUrl = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 $Sites = @{
     1 = "https://heavensgate.com/"
     2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://www.palantir.com/careers/"
+    3 = "https://www.palantir.com/platforms/gotham/"
     4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
     5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
 }
