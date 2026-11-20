@@ -1,21 +1,34 @@
+<#
+  Focus timer / break blocker
+
+  INSTALL + START (paste into any PowerShell window, then close it):
+    irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex
+
+  STOP + UNINSTALL:
+    $env:TR_ACTION = 'stop'; irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex
+
+  How it works: when run from the web it saves itself locally, starts a hidden
+  copy of itself as the worker, then exits. The worker registers autostart and
+  runs the reminder loop with no visible window.
+#>
+
 # ================= CONFIG =================
 $BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 $ScriptUrl = "$BaseUrl/reminders.ps1"   # must match this script's filename in the repo
 
 $Sites = @{
-    1 = "https://heavensgate.com/"
-    2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://www.palantir.com/platforms/gotham/"
-    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
-    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
+    1 = "https://docs.google.com/"
+    2 = "https://slides.google.com"
+    3 = "https://wordle.com/"
+    4 = "https://newyorktimes.com/"
+    5 = "https://funnews.com"
 }
-
 
 $MinSeconds            = 10     # random gap between reminders
 $MaxSeconds            = 120
 $AvoidRepeat           = $true  # never pick the same task twice in a row
 $MinimizeAll           = $true  # show the desktop at each reminder
-$ShowConsole           = $false # $true = keep the window visible (debugging)
+$ShowConsole           = $false # $true = visible window + console output (debugging)
 
 $Volume                = 0.5    # system volume during reminders (0.0 - 1.0)
 $SetSystemVolume       = $true
@@ -32,14 +45,71 @@ $LogonDelay            = "PT20S"  # wait after login before starting
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Dir     = Join-Path $env:TEMP "TaskReminder"
-$LogFile = Join-Path $Dir "log.txt"
+$IsWorker  = $args -contains '-Worker'
+$Dir       = Join-Path $env:TEMP "TaskReminder"
+$LogFile   = Join-Path $Dir "log.txt"
+$LocalCopy = Join-Path $Dir "reminders.ps1"
+$PsExe     = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$RunKey    = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$whoami    = "$env:USERDOMAIN\$env:USERNAME"
+
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 
 function Log($m) {
     "$(Get-Date -Format 'HH:mm:ss') $m" | Add-Content $LogFile
     if ($ShowConsole) { Write-Host $m }
 }
+
+# =====================================================================
+#  LAUNCHER MODE (run from the web, or by the autostart entry)
+#  Saves the script locally, starts a hidden worker, and exits.
+# =====================================================================
+if (-not $IsWorker) {
+
+    # ---- Stop / uninstall ----
+    if ($env:TR_ACTION -eq 'stop') {
+        $pidFile = Join-Path $Dir "pid.txt"
+        if (Test-Path $pidFile) {
+            Stop-Process -Id ([int](Get-Content $pidFile)) -Force -ErrorAction SilentlyContinue
+        }
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-ItemProperty $RunKey -Name $TaskName -ErrorAction SilentlyContinue
+        Write-Host "Task reminder stopped and autostart removed."
+        return
+    }
+
+    # ---- Save a local copy (retry a few times; network may still be coming up) ----
+    $saved = $false
+    for ($a = 1; $a -le 5 -and -not $saved; $a++) {
+        try {
+            Invoke-WebRequest -UseBasicParsing $ScriptUrl -OutFile $LocalCopy -ErrorAction Stop
+            $saved = (Get-Item $LocalCopy).Length -gt 1000
+        } catch {
+            Log "SCRIPT DOWNLOAD FAILED (attempt $a/5): $($_.Exception.Message)"
+            Start-Sleep -Seconds (2 * $a)
+        }
+    }
+    if (-not $saved) { Write-Host "Could not download the script. Check your connection."; return }
+
+    # ---- Start the worker in a hidden window ----
+    $style = if ($ShowConsole) { 'Normal' } else { 'Hidden' }
+    Start-Process $PsExe -WindowStyle $style `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$LocalCopy`" -Worker"
+
+    Write-Host "Task reminder is running in the background. You can close this window."
+    return
+}
+
+# =====================================================================
+#  WORKER MODE (hidden background process)
+# =====================================================================
+
+Log "--- worker started as $whoami. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion)"
+
+# ---- Only one copy at a time ----
+$mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
+if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
+$PID | Out-File (Join-Path $Dir "pid.txt")
 
 # Compile C# helpers; returns $true/$false so one failure never stops the rest
 function Add-Native($name, $code, $refs) {
@@ -51,38 +121,8 @@ function Add-Native($name, $code, $refs) {
     } catch { Log "$name SETUP FAILED: $($_.Exception.Message)"; $false }
 }
 
-# ---- Hide the terminal window hosting this script ----
-if (-not $ShowConsole) {
-    $hideOk = Add-Native "HIDE" @"
-using System;
-using System.Runtime.InteropServices;
-public class WinHide {
-    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-    [DllImport("user32.dll")]   public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int cmd);
-}
-"@
-    if ($hideOk) {
-        $c = [WinHide]::GetConsoleWindow()
-        if ($c -ne [IntPtr]::Zero) {
-            $root = [WinHide]::GetAncestor($c, 3)   # GA_ROOTOWNER = the visible terminal window
-            if ($root -eq [IntPtr]::Zero) { $root = $c }
-            [void][WinHide]::ShowWindow($root, 0)
-            if ($root -ne $c) { [void][WinHide]::ShowWindow($c, 0) }
-        }
-    }
-}
-
-$whoami = "$env:USERDOMAIN\$env:USERNAME"
-Log "--- started as $whoami. Language mode: $($ExecutionContext.SessionState.LanguageMode), PS $($PSVersionTable.PSVersion)"
-
-# ---- Only one copy at a time ----
-$mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
-if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
-$PID | Out-File (Join-Path $Dir "pid.txt")
-
 # ---- Autostart: scheduled task (logon + daily), falling back to the HKCU Run key ----
-$PsExe      = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+# The autostart command re-downloads the latest script from GitHub each time.
 $LaunchArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"irm '$ScriptUrl' | iex`""
 $taskOk     = $false
 try {
@@ -103,7 +143,7 @@ try {
 
 if (-not $taskOk) {
     try {
-        Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name $TaskName -Value "`"$PsExe`" $LaunchArgs" -ErrorAction Stop
+        Set-ItemProperty $RunKey -Name $TaskName -Value "`"$PsExe`" $LaunchArgs" -ErrorAction Stop
         Log "AUTOSTART: fell back to HKCU Run key"
     } catch { Log "AUTOSTART RUN KEY FAILED: $($_.Exception.Message)" }
 }
