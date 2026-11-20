@@ -11,6 +11,7 @@ $Sites = @{
 }
 
 
+
 $MinSeconds            = 10
 $MaxSeconds            = 120
 $AvoidRepeat           = $true
@@ -58,6 +59,38 @@ function Add-Native($name, $code, $refs) {
         $false
     }
 }
+
+# ---- Console visibility ----
+$consoleOk = Add-Native "CONSOLE VISIBILITY" @"
+using System;
+using System.Runtime.InteropServices;
+
+public class ConsoleWindow {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+
+function Set-ConsoleVisible([bool]$Visible) {
+    if (-not $consoleOk) { return }
+    $hwnd = [ConsoleWindow]::GetConsoleWindow()
+    if ($hwnd -ne [IntPtr]::Zero) {
+        [void][ConsoleWindow]::ShowWindow($hwnd, $(if ($Visible) { 5 } else { 0 }))
+    }
+}
+
+function HideConsole {
+    Set-ConsoleVisible -Visible $false
+}
+
+function ShowConsole {
+    Set-ConsoleVisible -Visible $true
+}
+
+if ($ShowConsole) { ShowConsole } else { HideConsole }
 
 # ---- Only one copy at a time ----
 $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
