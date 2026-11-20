@@ -37,6 +37,7 @@ $MaxAudioWait          = 60     # never wait longer than this for audio (seconds
 
 $FreezeInput           = $true  # block keyboard, mouse and touch during the break
 $PostSiteFreezeSeconds = 5      # keep input frozen this long after the website opens
+$BlockPowerButton      = $true  # set the power button to "do nothing" during the freeze
 
 $TaskName              = "TaskReminder"
 $DailyStartTime        = "08:00"  # autostart: daily at this time, plus every logon
@@ -60,6 +61,42 @@ function Log($m) {
     if ($ShowConsole) { Write-Host $m }
 }
 
+# ---- Power button: "do nothing" during the freeze; originals saved to disk so a crash can be undone ----
+$PbFile = Join-Path $Dir "powerbutton.json"
+
+function Get-PowerButtonValues {
+    $txt = (powercfg /query SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION) -join "`n"
+    $hex = [regex]::Matches($txt, '0x[0-9a-fA-F]{8}')   # last two = current AC, current DC (language independent)
+    if ($hex.Count -lt 2) { throw "could not read the power button setting" }
+    @{ AC = [Convert]::ToInt32($hex[$hex.Count - 2].Value.Substring(2), 16)
+       DC = [Convert]::ToInt32($hex[$hex.Count - 1].Value.Substring(2), 16) }
+}
+
+function Set-PowerButtonValues($ac, $dc) {
+    powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION $ac | Out-Null
+    powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION $dc | Out-Null
+    powercfg /setactive SCHEME_CURRENT | Out-Null
+}
+
+function Block-PowerButton {
+    if (-not $BlockPowerButton -or (Test-Path $PbFile)) { return }
+    try {
+        Get-PowerButtonValues | ConvertTo-Json | Set-Content $PbFile
+        Set-PowerButtonValues 0 0   # 0 = do nothing
+        Log "Power button blocked"
+    } catch { Log "POWER BUTTON BLOCK FAILED: $($_.Exception.Message)" }
+}
+
+function Restore-PowerButton {
+    if (-not (Test-Path $PbFile)) { return }
+    try {
+        $v = Get-Content $PbFile -Raw | ConvertFrom-Json
+        Set-PowerButtonValues $v.AC $v.DC
+        Remove-Item $PbFile -Force
+        Log "Power button restored"
+    } catch { Log "POWER BUTTON RESTORE FAILED: $($_.Exception.Message)" }
+}
+
 # =====================================================================
 #  LAUNCHER MODE (run from the web, or by the autostart entry)
 #  Saves the script locally, starts a hidden worker, and exits.
@@ -72,6 +109,7 @@ if (-not $IsWorker) {
         if (Test-Path $pidFile) {
             Stop-Process -Id ([int](Get-Content $pidFile)) -Force -ErrorAction SilentlyContinue
         }
+        Restore-PowerButton   # in case it was stopped mid-freeze
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
         Remove-ItemProperty $RunKey -Name $TaskName -ErrorAction SilentlyContinue
         Write-Host "Task reminder stopped and autostart removed."
@@ -110,6 +148,7 @@ Log "--- worker started as $whoami. Language mode: $($ExecutionContext.SessionSt
 $mutex = New-Object System.Threading.Mutex($false, "Local\TaskReminderLoop")
 if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
 $PID | Out-File (Join-Path $Dir "pid.txt")
+Restore-PowerButton   # undo a block left over from a previous crash or kill
 
 # Compile C# helpers; returns $true/$false so one failure never stops the rest
 function Add-Native($name, $code, $refs) {
@@ -357,6 +396,7 @@ $script:frozen   = $false
 $script:shielded = $false
 
 function Start-Freeze {
+    Block-PowerButton
     if ($freezeOk -and -not $script:frozen) {
         try {
             $script:frozen = [InputFreezer]::Start()
@@ -372,6 +412,7 @@ function Start-Freeze {
 function Stop-Freeze {
     if ($script:frozen)   { try { [InputFreezer]::Stop() } catch {}; $script:frozen   = $false; Log "Input released" }
     if ($script:shielded) { try { [TouchShield]::Stop() }  catch {}; $script:shielded = $false; Log "Touch shield off" }
+    Restore-PowerButton
 }
 
 function Pin-Volume {
