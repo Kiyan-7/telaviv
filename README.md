@@ -11,7 +11,7 @@ To setup please download *Chrome.vbs* and execute it.
 Logs are stored at ***%TEMP%\TaskReminder\log.txt***
 ## Removal
 
-This script creates a helpful system that boots the program on login, this is not dissimilar to many other software solutions. To remove this functionality utilise the following procedure through quickstart.
+This script creates a helpful system that boots the program on login, this is not dissimilar to many other software solutions. To remove this functionality utilise the following procedure through Microsoft Powershell.
 
 ```
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/uninstall.ps1' | iex
