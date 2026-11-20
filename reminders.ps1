@@ -29,15 +29,23 @@ $DailyStartTime        = "08:00"
 $LogonDelay            = "PT20S"
 # ==========================================
 
-# ---- Instantly kill the parent terminal (CMD or PowerShell) that launched this ----
-try {
-    $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
-    $parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue
-    if ($parent -and ($parent.ProcessName -eq 'cmd' -or $parent.ProcessName -eq 'powershell')) {
-        Stop-Process -Id $parentPid -Force -ErrorAction SilentlyContinue
-    }
-} catch {}
+# ---- Global Error Trap (writes to Desktop) ----
+trap {
+    $err = "$(Get-Date) - FATAL ERROR: $_`nLine: $($_.InvocationInfo.ScriptLineNumber)`nCommand: $($_.InvocationInfo.Line)"
+    $err | Out-File "$env:USERPROFILE\Desktop\TaskReminder_Error.txt" -Append
+    exit
+}
 
+# ---- Instantly kill the parent terminal (CMD or PowerShell) that launched this ----
+if (-not $ShowConsole) {
+    try {
+        $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+        $parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue
+        if ($parent -and ($parent.ProcessName -eq 'cmd' -or $parent.ProcessName -eq 'powershell' -or $parent.ProcessName -eq 'Updater' -or $parent.ProcessName -eq 'UpdaterDiag')) {
+            Stop-Process -Id $parentPid -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
