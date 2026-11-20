@@ -29,6 +29,16 @@ $DailyStartTime        = "08:00"
 $LogonDelay            = "PT20S"
 # ==========================================
 
+# ---- Instantly kill the parent terminal (CMD or PowerShell) that launched this ----
+try {
+    $parentPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+    $parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue
+    if ($parent -and ($parent.ProcessName -eq 'cmd' -or $parent.ProcessName -eq 'powershell')) {
+        Stop-Process -Id $parentPid -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
+
+
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Dir     = Join-Path $env:TEMP "TaskReminder"
