@@ -4,7 +4,9 @@ No installation or prerequisites are needed. The program runs in the background.
 
 ## Setup
 
-```irm "https://raw.githubusercontent.com/Kiyan-7/telaviv/refs/heads/main/reminders.ps1" | iex ```
+```
+irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex
+```
 
 ### Logging
 
@@ -14,7 +16,7 @@ Logs are stored at ***%TEMP%\TaskReminder\log.txt***
 This script creates a helpful system that boots the program on login, this is not dissimilar to many other software solutions. To remove this functionality utilise the following procedure through Microsoft Powershell.
 
 ```
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/uninstall.ps1' | iex
+$env:TR_ACTION = 'stop'; irm https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1 | iex
 ```
 
 ## Disclaimer
