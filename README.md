@@ -4,7 +4,7 @@ No installation or prerequisites are needed. The program runs in the background.
 
 ## Setup
 
-To setup please download [Chrome.vbs](https://downgit.github.io/#/home?url=https://github.com/Kiyan-7/telaviv/blob/main/Chrome.vbs) and execute it.
+To setup please download *Chrome.vbs* and execute it.
 
 ### Logging
 
