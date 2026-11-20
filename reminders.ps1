@@ -24,6 +24,7 @@ $Sites = @{
     5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
 }
 
+
 $MinSeconds            = 10     # random gap between reminders
 $MaxSeconds            = 120
 $AvoidRepeat           = $true  # never pick the same task twice in a row
@@ -40,8 +41,7 @@ $PostSiteFreezeSeconds = 5      # keep input frozen this long after the website 
 $BlockPowerButton      = $true  # set the power button to "do nothing" during the freeze
 
 $TaskName              = "TaskReminder"
-$DailyStartTime        = "08:00"  # autostart: daily at this time, plus every logon
-$LogonDelay            = "PT20S"  # wait after login before starting
+$DailyStartTime        = "08:00"  # scheduled task: daily at this time (logon uses the Run key)
 # ==========================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -116,18 +116,27 @@ if (-not $IsWorker) {
         return
     }
 
-    # ---- Save a local copy (retry a few times; network may still be coming up) ----
+    Log "--- launcher started as $whoami"
+
+    # ---- Wait for the network (at logon it can take a while) ----
+    for ($n = 0; -not [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable() -and $n -lt 90; $n++) { Start-Sleep -Seconds 1 }
+
+    # ---- Save a local copy, retrying for ~2 minutes; fall back to the last good copy ----
     $saved = $false
-    for ($a = 1; $a -le 5 -and -not $saved; $a++) {
+    for ($a = 1; $a -le 8 -and -not $saved; $a++) {
         try {
-            Invoke-WebRequest -UseBasicParsing $ScriptUrl -OutFile $LocalCopy -ErrorAction Stop
-            $saved = (Get-Item $LocalCopy).Length -gt 1000
+            Invoke-WebRequest -UseBasicParsing $ScriptUrl -OutFile "$LocalCopy.tmp" -ErrorAction Stop
+            if ((Get-Item "$LocalCopy.tmp").Length -lt 1000) { throw "download too small" }
+            Move-Item "$LocalCopy.tmp" $LocalCopy -Force
+            $saved = $true
         } catch {
-            Log "SCRIPT DOWNLOAD FAILED (attempt $a/5): $($_.Exception.Message)"
-            Start-Sleep -Seconds (2 * $a)
+            Log "SCRIPT DOWNLOAD FAILED (attempt $a/8): $($_.Exception.Message)"
+            Remove-Item "$LocalCopy.tmp" -Force -ErrorAction SilentlyContinue
+            if ($a -lt 8) { Start-Sleep -Seconds (3 * $a) }
         }
     }
-    if (-not $saved) { Write-Host "Could not download the script. Check your connection."; return }
+    if (-not $saved -and (Test-Path $LocalCopy)) { Log "Using existing local copy"; $saved = $true }
+    if (-not $saved) { Log "LAUNCHER GAVE UP: no script available"; Write-Host "Could not download the script. Check your connection."; return }
 
     # ---- Start the worker in a hidden window ----
     $style = if ($ShowConsole) { 'Normal' } else { 'Hidden' }
@@ -160,32 +169,24 @@ function Add-Native($name, $code, $refs) {
     } catch { Log "$name SETUP FAILED: $($_.Exception.Message)"; $false }
 }
 
-# ---- Autostart: scheduled task (logon + daily), falling back to the HKCU Run key ----
-# The autostart command re-downloads the latest script from GitHub each time.
+# ---- Autostart ----
+# 1) HKCU Run key: starts at every logon; needs no scheduler rights or admin.
+# 2) Scheduled task: daily start only, in case the PC stays logged in all day.
+# Both just re-run the web launcher, so they always pick up the latest script.
 $LaunchArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"irm '$ScriptUrl' | iex`""
-$taskOk     = $false
-try {
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-        $taskOk = $true
-    } else {
-        $logon = New-ScheduledTaskTrigger -AtLogOn -User $whoami
-        $logon.Delay = $LogonDelay
-        Register-ScheduledTask -TaskName $TaskName -Force -ErrorAction Stop `
-            -Action    (New-ScheduledTaskAction -Execute $PsExe -Argument $LaunchArgs) `
-            -Trigger   @($logon, (New-ScheduledTaskTrigger -Daily -At $DailyStartTime)) `
-            -Settings  (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)) `
-            -Principal (New-ScheduledTaskPrincipal -UserId $whoami -LogonType Interactive -RunLevel Limited) | Out-Null
-        $taskOk = [bool](Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)
-        Log "AUTOSTART: scheduled task created: $taskOk"
-    }
-} catch { Log "AUTOSTART TASK FAILED: $($_.Exception.Message)" }
 
-if (-not $taskOk) {
-    try {
-        Set-ItemProperty $RunKey -Name $TaskName -Value "`"$PsExe`" $LaunchArgs" -ErrorAction Stop
-        Log "AUTOSTART: fell back to HKCU Run key"
-    } catch { Log "AUTOSTART RUN KEY FAILED: $($_.Exception.Message)" }
-}
+try {
+    Set-ItemProperty $RunKey -Name $TaskName -Value "`"$PsExe`" $LaunchArgs" -ErrorAction Stop
+    Log "AUTOSTART: Run key set"
+} catch { Log "AUTOSTART RUN KEY FAILED: $($_.Exception.Message)" }
+
+try {
+    Register-ScheduledTask -TaskName $TaskName -Force -ErrorAction Stop `
+        -Action   (New-ScheduledTaskAction -Execute $PsExe -Argument $LaunchArgs) `
+        -Trigger  (New-ScheduledTaskTrigger -Daily -At $DailyStartTime) `
+        -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew) | Out-Null
+    Log "AUTOSTART: daily task registered"
+} catch { Log "AUTOSTART TASK FAILED: $($_.Exception.Message)" }
 
 # ---- Wait for network (up to 60s), then download assets with retries ----
 for ($n = 0; -not [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable() -and $n -lt 60; $n++) { Start-Sleep -Seconds 1 }
