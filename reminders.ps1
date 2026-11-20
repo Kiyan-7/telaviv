@@ -26,7 +26,7 @@ $Sites = @{
 
 
 $MinSeconds            = 10     # random gap between reminders
-$MaxSeconds            = 120
+$MaxSeconds            = 60
 $AvoidRepeat           = $true  # never pick the same task twice in a row
 $MinimizeAll           = $true  # show the desktop at each reminder
 $ShowConsole           = $false # $true = visible window + console output (debugging)
